@@ -3,6 +3,8 @@ import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core
 export const PROVIDERS = ["anthropic", "openai", "google", "custom"] as const;
 /** "hosted" agents are run by AgentsHUB itself (see src/lib/runner); the rest connect from outside. */
 export const AGENT_KINDS = ["claude_code", "mcp", "sdk", "hosted"] as const;
+/** A "lead" plans: it takes new top-level tasks, splits them and hands the pieces to the team. */
+export const AGENT_ROLES = ["member", "lead"] as const;
 export const AGENT_STATUSES = ["active", "waiting", "paused", "offline"] as const;
 export const COLUMNS = ["backlog", "ready", "in_progress", "waiting_on_you", "review", "done"] as const;
 export const PRIORITIES = ["low", "medium", "high", "critical"] as const;
@@ -12,6 +14,7 @@ export const RISKS = ["low", "medium", "high"] as const;
 export const DECISIONS = ["pending", "approved", "denied"] as const;
 
 export type Provider = (typeof PROVIDERS)[number];
+export type AgentRole = (typeof AGENT_ROLES)[number];
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 export type Column = (typeof COLUMNS)[number];
 export type Priority = (typeof PRIORITIES)[number];
@@ -27,6 +30,9 @@ export const agents = sqliteTable("agents", {
   skills: text("skills", { mode: "json" }).$type<string[]>().notNull().default([]),
   /** System prompt for hosted agents. */
   instructions: text("instructions").notNull().default(""),
+  role: text("role", { enum: AGENT_ROLES }).notNull().default("member"),
+  /** Hosted agents: messages up to this time have been shown to the agent. */
+  inboxReadAt: integer("inbox_read_at"),
   status: text("status", { enum: AGENT_STATUSES }).notNull().default("offline"),
   currentTaskId: text("current_task_id"),
   lastHeartbeat: integer("last_heartbeat"),
@@ -126,6 +132,18 @@ export const approvals = sqliteTable("approvals", {
   consumedAt: integer("consumed_at"),
 });
 
+/** Team notes: shared memory every agent (and the user) can read and write. One note per title. */
+export const notes = sqliteTable("notes", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull().unique(),
+  text: text("text").notNull(),
+  /** null means the user wrote it. */
+  authorAgentId: text("author_agent_id"),
+  taskId: text("task_id"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export type Agent = typeof agents.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Run = typeof runs.$inferSelect;
@@ -133,6 +151,7 @@ export type AgentEvent = typeof events.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Command = typeof commands.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;
+export type Note = typeof notes.$inferSelect;
 
 /** Agent as the UI sees it: never includes the token hash. */
 export type PublicAgent = Omit<Agent, "tokenHash">;

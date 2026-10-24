@@ -198,3 +198,72 @@ describe("hosted runner", () => {
     expect((await data.getRuns({ agentId: agent.id }))[0].outcome).toBe("cancelled");
   });
 });
+
+describe("teamwork", () => {
+  const hosted = async (id: string) => (await data.getHostedAgents()).find((a) => a.id === id)!;
+
+  it("leaves new top-level tasks to an online lead, and hands a split task back when its subtasks are done", async () => {
+    // Clear free tasks left by earlier tests so the picks below are about this test's tasks.
+    for (const t of await data.getTasks()) if (!t.ownerAgentId && t.column === "ready") await data.updateTask(t.id, { column: "done" });
+
+    const { agent: lead } = await data.createAgent({ name: "Lead", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted", role: "lead" });
+    const { agent: dev } = await data.createAgent({ name: "Dev", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted", skills: ["code"] });
+    await data.heartbeat(lead.id);
+    const big = await data.createTask({ title: "Build the landing page", column: "ready" });
+
+    expect(await runner.pickTask(dev)).toBeNull();
+    expect((await runner.pickTask(lead))?.id).toBe(big.id);
+
+    script.push(
+      {
+        calls: [
+          {
+            name: "create_subtasks",
+            args: { parentTaskId: big.id, subtasks: [{ title: "Write the copy", ownerAgentId: dev.id }, { title: "Pick colors" }] },
+          },
+        ],
+      },
+      { calls: [] },
+    );
+    await runner.runTask(await hosted(lead.id), big);
+    expect((await data.getTask(big.id))?.column).toBe("in_progress");
+    expect((await data.getRuns({ agentId: lead.id }))[0].outcome).toBe("success");
+
+    // The parent waits; the dev gets its subtask, and the unassigned subtask is open to anyone.
+    expect(await runner.pickTask(lead)).not.toMatchObject({ id: big.id });
+    const subs = (await data.getTasks()).filter((t) => t.parentTaskId === big.id);
+    expect((await runner.pickTask(dev))?.title).toBe("Write the copy");
+
+    for (const s of subs) await data.updateTask(s.id, { column: "done" });
+    expect((await runner.pickTask(lead))?.id).toBe(big.id);
+  });
+
+  it("wakes an idle agent for a direct message, but not for another agent writing to everyone", async () => {
+    const { agent: a } = await data.createAgent({ name: "Ann", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted" });
+    const { agent: b } = await data.createAgent({ name: "Bob", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted" });
+    const since = Date.now() - 1;
+    await data.postMessage({ fromAgentId: b.id, text: "FYI to everyone" });
+    expect(await data.getWakeMessages(a.id, since)).toHaveLength(0);
+    await data.postMessage({ fromAgentId: b.id, toAgentId: a.id, text: "Can you review my PR?" });
+    await data.postMessage({ fromAgentId: null, text: "Team: ship by Friday" });
+    const waiting = await data.getWakeMessages(a.id, since);
+    expect(waiting.map((m) => m.text)).toEqual(["Can you review my PR?", "Team: ship by Friday"]);
+
+    script.push({ calls: [{ name: "send_message", args: { text: "On it", toAgentId: b.id } }] }, { calls: [] });
+    await runner.runInbox(await hosted(a.id), waiting);
+    const reply = (await data.getMessages({ limit: 5 })).find((m) => m.fromAgentId === a.id);
+    expect(reply?.text).toBe("On it");
+    expect((await hosted(a.id)).inboxReadAt).toBe(waiting[1].at);
+    expect(await data.getWakeMessages(a.id, (await hosted(a.id)).inboxReadAt!)).toHaveLength(0);
+  });
+
+  it("keeps team notes, one per title", async () => {
+    const { agent } = await data.createAgent({ name: "Noter", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted" });
+    const write = tools.findTool("write_note")!;
+    const read = tools.findTool("read_notes")!;
+    await write.run({ title: "Stack", text: "Next.js" }, { agent });
+    await write.run({ title: "Stack", text: "Next.js + SQLite" }, { agent });
+    const { notes } = (await read.run({ query: "sqlite" }, { agent })) as { notes: { title: string; text: string }[] };
+    expect(notes).toEqual([expect.objectContaining({ title: "Stack", text: "Next.js + SQLite" })]);
+  });
+});

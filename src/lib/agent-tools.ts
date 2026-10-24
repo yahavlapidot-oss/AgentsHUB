@@ -16,12 +16,14 @@ import {
   getEvents,
   getInbox,
   getMessages,
+  getNotes,
   getTask,
   getTasks,
   heartbeat,
   postMessage,
   reportProgress,
   takePendingCommands,
+  writeNote,
 } from "./data";
 import { boardLink, notifyByEmail } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
@@ -125,7 +127,15 @@ export const AGENT_TOOLS: AgentTool[] = [
     run: async () => {
       const agents = await getAgents();
       return {
-        agents: agents.map((a) => ({ id: a.id, name: a.name, model: a.model, skills: a.skills, status: a.status })),
+        agents: agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          role: a.role,
+          model: a.model,
+          skills: a.skills,
+          status: a.status,
+          currentTaskId: a.currentTaskId,
+        })),
       };
     },
   }),
@@ -213,6 +223,67 @@ export const AGENT_TOOLS: AgentTool[] = [
         payload: { text: `Split into ${created.length} subtasks`, subtasks: created.map((c) => c.title) },
       });
       return { subtasks: created };
+    },
+  }),
+
+  tool({
+    name: "create_task",
+    description:
+      "Add a new task to the board, for work that isn't part of an existing task (for parts of a task, use create_subtasks). Set ownerAgentId to hand it to a specific agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: str("Short title"),
+        description: str("What to do"),
+        acceptanceCriteria: str("How we know it's done"),
+        ownerAgentId: str("Agent to assign, from list_agents (optional)"),
+        priority: { type: "string", enum: [...PRIORITIES] },
+      },
+      required: ["title"],
+    },
+    args: z.object({
+      title: z.string().min(1).max(300),
+      description: z.string().max(10_000).optional(),
+      acceptanceCriteria: z.string().max(5_000).optional(),
+      ownerAgentId: z.string().optional(),
+      priority: z.enum(PRIORITIES).optional(),
+    }),
+    run: async (input, { agent }) => {
+      const task = await createTask({ ...input, ownerAgentId: input.ownerAgentId || null, column: "ready", createdBy: agent.id });
+      return { task: compactTask(task) };
+    },
+  }),
+
+  tool({
+    name: "write_note",
+    description:
+      "Save something the whole team should remember in the team notes: a decision, a convention, a fact you found, a result others will need. Writing to an existing title replaces that note, so read it first and keep what still holds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: str("Short, specific title, e.g. 'API naming convention'"),
+        text: str("The note"),
+        taskId: str("Related task id (optional)"),
+      },
+      required: ["title", "text"],
+    },
+    args: z.object({ title: z.string().trim().min(1).max(200), text: z.string().min(1).max(20_000), taskId: z.string().optional() }),
+    run: async ({ title, text, taskId }, { agent }) => {
+      const note = await writeNote({ title, text, authorAgentId: agent.id, taskId: taskId || null });
+      return { note: { id: note.id, title: note.title, updatedAt: note.updatedAt } };
+    },
+  }),
+
+  tool({
+    name: "read_notes",
+    description: "Read the team notes: decisions, conventions and results the team saved. Pass query to search titles and text.",
+    inputSchema: { type: "object", properties: { query: str("Search text (optional)") } },
+    args: z.object({ query: z.string().optional() }),
+    run: async ({ query }) => {
+      const notes = await getNotes({ query });
+      return {
+        notes: notes.slice(0, 50).map((n) => ({ title: n.title, text: n.text, author: n.authorAgentId ?? "user", updatedAt: n.updatedAt })),
+      };
     },
   }),
 
