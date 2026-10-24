@@ -85,3 +85,41 @@ curl -X POST ${baseUrl}/api/v1/heartbeat \\
 
   return { curl, code: `${hub}\n\n${flow}\n\n${call[provider]}\n\n${report}` };
 }
+
+/** Setup for agents that speak MCP: Claude Code (plus hooks) and Codex. */
+export function mcpSnippets(baseUrl: string, token: string) {
+  const mcpUrl = `${baseUrl}/api/mcp`;
+
+  const claudeMcp = `claude mcp add --transport http agentshub ${mcpUrl} \\
+  --header "Authorization: Bearer ${token}"`;
+
+  const hookCommand = "node ~/.claude/agentshub-hook.mjs";
+  const hook = (timeout?: number) => [{ type: "command", command: hookCommand, ...(timeout ? { timeout } : {}) }];
+  const claudeHooks = JSON.stringify(
+    {
+      env: { AGENTSHUB_URL: baseUrl, AGENTSHUB_TOKEN: token },
+      hooks: {
+        SessionStart: [{ hooks: hook() }],
+        UserPromptSubmit: [{ hooks: hook() }],
+        // Long timeout: the hook waits here while you approve or deny on the board.
+        PreToolUse: [{ matcher: "*", hooks: hook(660) }],
+        PostToolUse: [{ matcher: "*", hooks: hook() }],
+        Stop: [{ hooks: hook() }],
+      },
+    },
+    null,
+    2,
+  );
+
+  const hookInstall = `curl -fsSL ${baseUrl}/agentshub-hook.mjs -o ~/.claude/agentshub-hook.mjs`;
+
+  const codex = `# ~/.codex/config.toml
+[mcp_servers.agentshub]
+url = "${mcpUrl}"
+bearer_token_env_var = "AGENTSHUB_TOKEN"
+
+# and in your shell profile:
+# export AGENTSHUB_TOKEN=${token}`;
+
+  return { claudeMcp, claudeHooks, hookInstall, codex };
+}

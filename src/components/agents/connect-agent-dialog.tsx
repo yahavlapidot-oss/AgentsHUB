@@ -5,11 +5,21 @@ import { useEffect, useState } from "react";
 import { createAgentAction } from "@/app/actions";
 import { PROVIDER_META } from "@/lib/format";
 import { PROVIDERS, type Provider } from "@/lib/schema";
-import { connectSnippets } from "@/lib/snippets";
+import { connectSnippets, mcpSnippets } from "@/lib/snippets";
 import { useLive } from "../live";
 import { CopyBox, Modal } from "../ui";
 
+type Mode = "hosted" | "mcp" | "api";
+
+const MODES: { id: Mode; label: string; hint: string }[] = [
+  { id: "hosted", label: "AgentsHUB runs it", hint: "Picks up Ready tasks by itself, using your API key for the model." },
+  { id: "mcp", label: "Claude Code / Codex", hint: "Connects over MCP. Claude Code can also report every step through hooks." },
+  { id: "api", label: "My own code", hint: "Your script calls the board's REST API." },
+];
+
 export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<Mode>("hosted");
+  const [instructions, setInstructions] = useState("");
   const { refresh } = useLive();
   const router = useRouter();
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -26,6 +36,7 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     if (!name.trim()) return setErr("Give the agent a name.");
     if (!model.trim()) return setErr("Pick or type a model.");
+    if (mode === "hosted" && provider === "custom") return setErr("AgentsHUB can run Claude, GPT or Gemini agents.");
     try {
       const r = await createAgentAction({
         name,
@@ -33,12 +44,56 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
         model,
         machine: machine || null,
         skills: skills.split(",").map((s) => s.trim()).filter(Boolean),
+        kind: mode === "hosted" ? "hosted" : mode === "mcp" ? "mcp" : "sdk",
+        instructions: mode === "hosted" ? instructions : "",
       });
       setResult(r);
       await refresh();
     } catch {
       setErr("Could not create the agent. Check the fields and try again.");
     }
+  }
+
+  if (result && mode === "hosted") {
+    return (
+      <Modal title={`${name} is on the team`} onClose={onClose}>
+        <div className="flex flex-col gap-4 text-sm">
+          <p>
+            AgentsHUB will run this agent with {PROVIDER_META[provider].label} ({model}). It takes tasks in <b>Ready</b> that are
+            assigned to it or to nobody, splits big ones into subtasks, and reports every step here.
+          </p>
+          <p className="text-ink-soft">
+            The server needs the provider&apos;s API key ({provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"}).
+            Without it, the agent&apos;s first task stops with an error on the board.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={() => router.push(`/agents/${result.id}`)}>Open agent</button>
+            <button type="button" className="btn-primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  if (result && mode === "mcp") {
+    const m = mcpSnippets(origin, result.token);
+    return (
+      <Modal title={`${name} is ready to connect`} onClose={onClose} wide>
+        <div className="flex flex-col gap-4">
+          <div className="rounded-md bg-[#fff6e5] p-3 text-sm text-[#7a4a00]">
+            Copy these now. The API key inside them is shown only once.
+          </div>
+          <CopyBox label="Claude Code: add the board's tools" text={m.claudeMcp} />
+          <CopyBox label="Claude Code: download the hook (reports every step, obeys pause and approvals)" text={m.hookInstall} />
+          <CopyBox label="Claude Code: merge into ~/.claude/settings.json" text={m.claudeHooks} />
+          <CopyBox label="Codex" text={m.codex} />
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={() => router.push(`/agents/${result.id}`)}>Open agent</button>
+            <button type="button" className="btn-primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </Modal>
+    );
   }
 
   if (result) {
@@ -65,9 +120,32 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
     <Modal title="Connect an agent" onClose={onClose}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <fieldset>
+          <legend className="label">How does it run?</legend>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  setMode(m.id);
+                  if (m.id === "hosted" && provider === "custom") {
+                    setProvider("anthropic");
+                    setModel(PROVIDER_META.anthropic.models[0]);
+                  }
+                }}
+                aria-pressed={mode === m.id}
+                className={`rounded-md border px-2 py-2 text-left text-sm ${mode === m.id ? "border-2 border-[#0073ea]" : "border-line hover:bg-canvas"}`}
+              >
+                <div className="font-medium">{m.label}</div>
+                <div className="mt-0.5 text-xs text-ink-soft">{m.hint}</div>
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset>
           <legend className="label">Model provider</legend>
           <div className="grid grid-cols-4 gap-2">
-            {PROVIDERS.map((p) => (
+            {PROVIDERS.filter((p) => mode !== "hosted" || p !== "custom").map((p) => (
               <button
                 key={p}
                 type="button"
@@ -105,10 +183,22 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
             <input id="ca-skills" className="input" value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="frontend, tests" />
           </div>
         </div>
+        {mode === "hosted" && (
+          <div>
+            <label className="label" htmlFor="ca-instructions">Instructions (optional)</label>
+            <textarea
+              id="ca-instructions"
+              className="input min-h-[80px]"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder="You are our researcher. Answer with sources and keep summaries short."
+            />
+          </div>
+        )}
         {err && <p className="text-sm text-[#d83a52]">{err}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary">Create API key</button>
+          <button type="submit" className="btn-primary">{mode === "hosted" ? "Add agent" : "Create API key"}</button>
         </div>
       </form>
     </Modal>

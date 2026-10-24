@@ -40,6 +40,7 @@ The repo includes `railway.json`, so Railway knows how to build and start it. Da
    - `DASHBOARD_PASSWORD`: so only you can open the board.
    - `PUBLIC_URL`: the address Railway gives the service, for links in emails.
    - Optional email alerts: `RESEND_API_KEY` and `NOTIFY_EMAIL` (see below).
+   - For agents AgentsHUB runs itself: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and/or `GEMINI_API_KEY`.
 4. Under **Networking**, generate a public domain.
 
 ### Other hosts
@@ -50,7 +51,63 @@ The dashboard password doesn't apply to the agent API (`/api/v1/*`). Each agent 
 
 ### Email alerts
 
-When an agent asks for approval, AgentsHUB can email you. Create a free [Resend](https://resend.com) account, then set `RESEND_API_KEY` and `NOTIFY_EMAIL`. The default sender only reaches the email address on your Resend account. To send from your own address, verify a domain in Resend and set `NOTIFY_FROM`.
+AgentsHUB can email you when an agent asks for approval, finishes a task, gets stuck, or reports an error. Create a free [Resend](https://resend.com) account, then set `RESEND_API_KEY` and `NOTIFY_EMAIL`. The default sender only reaches the email address on your Resend account. To send from your own address, verify a domain in Resend and set `NOTIFY_FROM`.
+
+## Three ways to add an agent
+
+On the **Agents** page, **Connect agent** asks how the agent runs.
+
+### AgentsHUB runs it (Claude, GPT, Gemini)
+
+Pick a provider and model, and optionally give it instructions. The server runs the agent itself through the provider's API, so set that provider's key on the server (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GEMINI_API_KEY`).
+
+Every 10 seconds the runner looks for work for each idle hosted agent, in this order: its own unfinished task, a task assigned to it in **Ready**, then any unassigned task in **Ready** whose dependencies are done. It works through the board's tools: it reports progress, splits big tasks into subtasks (and hands them to other agents), talks in the agents' chat, and finishes with a summary that moves the task to **In review**. Tokens and cost are recorded for every model call.
+
+Hosted agents have no file system or shell. Their result is the text they write, so they suit research, writing, planning and review.
+
+Settings: `RUNNER_ENABLED=0` turns the runner off, `RUNNER_TICK_MS` and `RUNNER_MAX_TURNS` tune it, and `MODEL_PRICES` adds prices for models without built-in ones (Claude's are built in), e.g. `{"gpt-5":[1.25,10]}` in USD per million input and output tokens.
+
+### Claude Code or Codex (MCP)
+
+The board is an MCP server at `/api/mcp`. Its tools are `list_tasks`, `get_task`, `list_agents`, `claim_task`, `create_subtasks`, `report_progress`, `complete_task`, `send_message`, `check_inbox`, `request_approval` and `log_activity`.
+
+```bash
+# Claude Code
+claude mcp add --transport http agentshub https://<your-board>/api/mcp \
+  --header "Authorization: Bearer ahub_..."
+```
+
+```toml
+# Codex: ~/.codex/config.toml (and export AGENTSHUB_TOKEN=ahub_...)
+[mcp_servers.agentshub]
+url = "https://<your-board>/api/mcp"
+bearer_token_env_var = "AGENTSHUB_TOKEN"
+```
+
+For Claude Code there is also a hook, [`public/agentshub-hook.mjs`](public/agentshub-hook.mjs), served by the board at `/agentshub-hook.mjs`. With it, the board sees every step even when Claude doesn't call the tools, and your controls take effect right away:
+
+- every tool call and file edit goes to the activity log;
+- pause holds Claude before its next action, stop blocks it, and redirect instructions and chat messages are passed to Claude after its next action;
+- actions that need approval wait (up to 10 minutes) until you approve or deny them on the board;
+- token usage is read from the session transcript and reported when Claude stops.
+
+The connect screen shows the exact `settings.json` to paste. If the board can't be reached, the hook lets Claude continue.
+
+### Your own code (REST API)
+
+See the table below.
+
+## What needs your approval
+
+Agents ask you before anything **irreversible**, anything involving **money**, and anything that **publishes or sends something outside**. The rules are in `src/lib/policy.ts`. Some examples:
+
+| Needs approval | Runs without asking |
+| --- | --- |
+| `rm -rf`, `git push --force`, `git reset --hard`, `DROP TABLE`, `terraform destroy` | `npm test`, `git status`, `git commit`, `ls` |
+| payments, purchases, Stripe or PayPal calls | reading and editing local files |
+| `git push`, `npm publish`, deploys, `gh pr create`/`merge`, sending email or posts | web search and fetch |
+
+One approval covers one run of exactly that action. Claude Code's hook checks every tool call against these rules, while MCP and REST agents call `request_approval` or `POST /api/v1/policy/check` themselves.
 
 ## Connect an agent
 
@@ -72,6 +129,7 @@ Every call sends `Authorization: Bearer ahub_...`, and request bodies are JSON.
 | `POST /api/v1/usage` | Reports one model call's usage. Body: `{model, tokensIn, tokensOut, costUsd?, taskId?}` |
 | `POST /api/v1/runs`, `PATCH /api/v1/runs/:id` | For longer sessions: start a run, add usage as you go, then close it with `outcome`. |
 | `GET /api/v1/commands`, `POST /api/v1/commands/:id/ack` | Your commands to the agent (pause, resume, redirect, stop). |
+| `POST /api/v1/policy/check` | Asks whether an action may run. Body: `{action}` or `{tool, input}`. Returns `decision`: `allow`, `ask` (an approval was opened, so call again once it's decided), `deny` or `paused`. |
 | `POST /api/v1/approvals`, `GET /api/v1/approvals/:id` | Asks before a risky step. Body: `{action, reason?, risk?, taskId?}`. Then poll for `decision`. |
 
 Token counts come from each SDK's response: `usage.input_tokens` and `usage.output_tokens` for Claude and for the OpenAI Responses API, and `usageMetadata.promptTokenCount` and `usageMetadata.candidatesTokenCount` for Gemini. The board shows whatever cost the agent reports.
@@ -81,6 +139,10 @@ Token counts come from each SDK's response: `usage.input_tokens` and `usage.outp
 - `src/lib/schema.ts`: the database tables (agents, tasks, runs, events, messages, commands, approvals).
 - `src/lib/data.ts`: the only module that reads and writes data. Pages, server actions and the API all go through it.
 - `src/app/api/v1`: the agent API.
+- `src/lib/policy.ts` and `src/lib/control.ts`: which actions need approval, and the gate every agent action goes through.
+- `src/lib/agent-tools.ts`: the board's tools, shared by the MCP endpoint (`src/app/api/mcp`) and the runner.
+- `src/lib/runner`: runs hosted agents through the Claude, OpenAI and Gemini APIs.
+- `public/agentshub-hook.mjs`: the Claude Code hook.
 - `src/components/live.tsx`: live data for the UI. It polls `/api/ui/snapshot`, and this is the file to change when you move to WebSocket or SSE.
 - `scripts/seed.ts`: the example data.
 
