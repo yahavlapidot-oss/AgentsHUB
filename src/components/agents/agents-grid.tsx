@@ -40,7 +40,10 @@ export function AgentsGrid() {
                   <div className="flex items-center gap-3">
                     <AgentAvatar agent={a} size={40} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold">{a.name}</p>
+                      <p className="truncate font-semibold">
+                        {a.name}
+                        {a.role === "lead" && <span className="ml-2 rounded bg-brand-soft px-1.5 py-0.5 text-[11px] font-medium text-brand">Lead</span>}
+                      </p>
                       <p className="flex items-center gap-2 text-xs text-ink-soft">
                         <ProviderTag provider={a.provider} />
                         <span className="truncate font-mono">{a.model}</span>

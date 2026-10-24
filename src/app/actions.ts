@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import * as data from "@/lib/data";
-import { AGENT_KINDS, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
+import { AGENT_KINDS, AGENT_ROLES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
 
 // Server actions used by the dashboard. The user is the actor (agentId null).
 
@@ -52,6 +52,7 @@ const NewAgent = z.object({
   skills: z.array(z.string().trim().min(1)).default([]),
   kind: z.enum(AGENT_KINDS).default("sdk"),
   instructions: z.string().max(20_000).default(""),
+  role: z.enum(AGENT_ROLES).default("member"),
 }).refine((a) => a.kind !== "hosted" || a.provider !== "custom", {
   message: "AgentsHUB can run Claude, GPT or Gemini agents",
 });
@@ -64,6 +65,24 @@ export async function createAgentAction(input: z.input<typeof NewAgent>) {
 
 export async function rotateTokenAction(agentId: string) {
   return { token: await data.rotateAgentToken(agentId) };
+}
+
+export async function setAgentRoleAction(agentId: string, role: (typeof AGENT_ROLES)[number]) {
+  await data.setAgentRole(agentId, z.enum(AGENT_ROLES).parse(role));
+}
+
+const NoteInput = z.object({
+  title: z.string().trim().min(1, "Give the note a title").max(200),
+  text: z.string().trim().min(1, "Write something").max(20_000),
+});
+
+export async function saveNoteAction(input: z.input<typeof NoteInput>) {
+  const note = NoteInput.parse(input);
+  await data.writeNote({ ...note, authorAgentId: null });
+}
+
+export async function deleteNoteAction(noteId: string) {
+  await data.deleteNote(noteId);
 }
 
 export async function deleteAgentAction(agentId: string) {

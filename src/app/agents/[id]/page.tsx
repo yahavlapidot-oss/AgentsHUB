@@ -30,7 +30,10 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         <div className="mt-3 flex flex-wrap items-center gap-4">
           <AgentAvatar agent={agent} size={52} />
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-semibold tracking-tight">{agent.name}</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+              {agent.name}
+              {agent.role === "lead" && <span className="rounded bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand">Team lead</span>}
+            </h1>
             <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-soft">
               <ProviderTag provider={agent.provider} />
               <span className="font-mono">{agent.model}</span>
@@ -122,7 +125,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
             )}
           </section>
         </div>
-        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} commands={commands} />
+        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role} commands={commands} />
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
 export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<Mode>("hosted");
   const [instructions, setInstructions] = useState("");
+  const [lead, setLead] = useState(false);
   const { refresh } = useLive();
   const router = useRouter();
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -46,6 +47,7 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
         skills: skills.split(",").map((s) => s.trim()).filter(Boolean),
         kind: mode === "hosted" ? "hosted" : mode === "mcp" ? "mcp" : "sdk",
         instructions: mode === "hosted" ? instructions : "",
+        role: lead ? "lead" : "member",
       });
       setResult(r);
       await refresh();
@@ -195,6 +197,13 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
             />
           </div>
         )}
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-0.5" checked={lead} onChange={(e) => setLead(e.target.checked)} />
+          <span>
+            <span className="font-medium">Team lead</span>
+            <span className="block text-xs text-ink-faint">New tasks go to the lead first. It splits them and assigns the pieces to the right agents.</span>
+          </span>
+        </label>
         {err && <p className="text-sm text-[#d83a52]">{err}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>

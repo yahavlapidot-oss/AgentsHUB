@@ -14,6 +14,7 @@ import {
   commands,
   events,
   messages,
+  notes,
   runs,
   tasks,
   type Agent,
@@ -22,7 +23,9 @@ import {
   type Column,
   type Command,
   type EventType,
+  type AgentRole,
   type Message,
+  type Note,
   type Priority,
   type Provider,
   type PublicAgent,
@@ -168,6 +171,7 @@ export async function createAgent(input: {
   machine?: string | null;
   skills?: string[];
   instructions?: string;
+  role?: AgentRole;
 }): Promise<{ agent: PublicAgent; token: string }> {
   const token = generateAgentToken();
   const [row] = await db
@@ -181,6 +185,7 @@ export async function createAgent(input: {
       machine: input.machine ?? null,
       skills: input.skills ?? [],
       instructions: input.instructions ?? "",
+      role: input.role ?? "member",
       tokenHash: hashToken(token),
       createdAt: Date.now(),
     })
@@ -193,6 +198,10 @@ export async function rotateAgentToken(agentId: string): Promise<string> {
   const token = generateAgentToken();
   await db.update(agents).set({ tokenHash: hashToken(token) }).where(eq(agents.id, agentId));
   return token;
+}
+
+export async function setAgentRole(agentId: string, role: AgentRole): Promise<void> {
+  await db.update(agents).set({ role }).where(eq(agents.id, agentId));
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
@@ -393,6 +402,70 @@ export async function getInbox(agentId: string, since: number): Promise<Message[
     )
     .orderBy(messages.at)
     .limit(100);
+}
+
+/**
+ * Messages that should wake an idle hosted agent: direct messages to it, and
+ * anything the user wrote to everyone. Agents writing to everyone don't wake
+ * the whole team.
+ */
+export async function getWakeMessages(agentId: string, since: number): Promise<Message[]> {
+  return db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        sql`${messages.at} > ${since}`,
+        or(eq(messages.toAgentId, agentId), and(isNull(messages.toAgentId), isNull(messages.fromAgentId))),
+        or(isNull(messages.fromAgentId), sql`${messages.fromAgentId} != ${agentId}`),
+      ),
+    )
+    .orderBy(messages.at)
+    .limit(100);
+}
+
+/** Records that a hosted agent has seen its messages up to this time. */
+export async function markInboxRead(agentId: string, at: number): Promise<void> {
+  await db.update(agents).set({ inboxReadAt: at }).where(eq(agents.id, agentId));
+}
+
+// ---------------------------------------------------------------- team notes
+
+export async function getNotes(opts: { query?: string } = {}): Promise<Note[]> {
+  const rows = await db.select().from(notes).orderBy(desc(notes.updatedAt));
+  const q = opts.query?.trim().toLowerCase();
+  return q ? rows.filter((n) => n.title.toLowerCase().includes(q) || n.text.toLowerCase().includes(q)) : rows;
+}
+
+/** Creates the note, or replaces the text of the note with the same title. */
+export async function writeNote(input: {
+  title: string;
+  text: string;
+  authorAgentId: string | null;
+  taskId?: string | null;
+}): Promise<Note> {
+  const now = Date.now();
+  const [row] = await db
+    .insert(notes)
+    .values({
+      id: newId("note"),
+      title: input.title,
+      text: input.text,
+      authorAgentId: input.authorAgentId,
+      taskId: input.taskId ?? null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: notes.title,
+      set: { text: input.text, authorAgentId: input.authorAgentId, taskId: input.taskId ?? null, updatedAt: now },
+    })
+    .returning();
+  return row;
+}
+
+export async function deleteNote(id: string): Promise<void> {
+  await db.delete(notes).where(eq(notes.id, id));
 }
 
 // ---------------------------------------------------------------- runs & usage

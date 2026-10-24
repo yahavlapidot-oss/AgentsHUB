@@ -4,6 +4,12 @@
  * for an idle hosted agent and a task it can take, then runs a tool-use loop
  * with the board's tools until the agent calls complete_task.
  *
+ * An idle hosted agent also wakes up when someone writes to it directly (or the
+ * user writes to everyone), answers, and goes back to waiting. A "lead" agent
+ * takes new top-level tasks, splits them and hands the pieces to the team; a
+ * task with open subtasks waits until they're done and then goes back to its
+ * owner to combine the results.
+ *
  * Control works the same as for outside agents: pause, resume, stop and
  * redirect commands are read between model turns; request_approval waits for
  * your decision on the Approvals page.
@@ -22,34 +28,63 @@ import {
   getHostedAgents,
   getEvents,
   getInbox,
+  getNotes,
   getTask,
   getTasks,
+  getWakeMessages,
   heartbeat,
+  markInboxRead,
   startRun,
   takePendingCommands,
   updateTask,
 } from "../data";
 import { boardLink, notifyByEmail } from "../notify";
 import { costUsd } from "../pricing";
-import type { Agent, Task } from "../schema";
+import type { Agent, Message, PublicAgent, Task } from "../schema";
 import { createChat, MissingKeyError, type ToolOutput } from "./providers";
 
 const TICK_MS = Number(process.env.RUNNER_TICK_MS ?? 10_000);
 const MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS ?? 40);
 const POLL_MS = 5_000;
+const INBOX_MAX_TURNS = 10;
+/** Caps how often messages can wake one agent, so two agents can't chat each other into a big bill. */
+const MAX_WAKES_PER_HOUR = Number(process.env.RUNNER_MAX_WAKES_PER_HOUR ?? 12);
 
 const SYSTEM = `You are an AI agent working on AgentsHUB, the board where your user tracks and directs a team of agents.
 You have been given one task. Work on it using the board tools:
 - report_progress after each meaningful step (a short note and a percentage).
 - If the task is big, split it with create_subtasks. Assign pieces to other agents (see list_agents) when their skills fit better, or leave them unassigned. Subtasks you keep for yourself will be given to you later as separate tasks; don't do them now.
+- After splitting, stop (reply without calling a tool). The task comes back to you when all its subtasks are done; then check and combine their results and call complete_task.
 - Talk to other agents with send_message. The user reads that chat too.
+- The team notes are the team's shared memory. Check read_notes when earlier decisions may matter, and save decisions, conventions and results others will need with write_note.
 - Before anything irreversible, anything that costs money, or anything that publishes or sends something outside, call request_approval and only proceed on 'allow'.
 - Your result is the text you write: put the full deliverable in complete_task's summary (or in a message), since you have no file system.
 - Finish with complete_task. If you cannot finish, explain why in report_progress and then call complete_task with what you have.`;
 
-type Job = { agentId: string; taskId: string; startedAt: number };
+const LEAD = `You are the team lead. New tasks come to you first. For each one, decide who should do it:
+- Small, or clearly your own kind of work: do it yourself.
+- Otherwise split it with create_subtasks and give every subtask an owner (ownerAgentId) whose skills fit, from list_agents. Spread the work; don't keep everything for yourself. Use dependsOnPrevious where order matters.
+- Record the plan and any decisions in the team notes, then stop. When the subtasks are done the task comes back to you: review the results, send work back with a message if something is missing, and finish with complete_task.`;
 
-const state = globalThis as unknown as { agentshubRunner?: { timer: NodeJS.Timeout; jobs: Map<string, Job> } };
+const INBOX = `You are an AI agent on AgentsHUB, the board where your user tracks and directs a team of agents.
+You are between tasks, and you were woken up because someone wrote to you. Read the messages and act on them with the board tools:
+- Answer questions with send_message (to the sender, or to everyone if it concerns the team).
+- If you're asked to do new work, add it with create_task (assign it to yourself or to the agent who fits) instead of doing it here; it will be picked up as a normal task.
+- Save decisions in the team notes with write_note.
+- Don't reply just to acknowledge or say thanks. When you're done, reply without calling a tool.`;
+
+function systemFor(agent: Agent, base: string): string {
+  return [base, agent.role === "lead" && LEAD, agent.instructions && `Your own instructions from the user:\n${agent.instructions}`]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+type Job = { agentId: string; taskId: string | null; startedAt: number };
+
+const state = globalThis as unknown as {
+  agentshubRunner?: { timer: NodeJS.Timeout; jobs: Map<string, Job> };
+  agentshubWakes?: Map<string, number[]>;
+};
 
 /** Starts the background loop once per server process. */
 export function startRunner(): void {
@@ -75,10 +110,16 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
       await heartbeat(agent.id, {});
       if (agent.status === "paused") continue;
       const task = await pickTask(agent);
-      if (!task) continue;
-      const job = { agentId: agent.id, taskId: task.id, startedAt: Date.now() };
-      jobs.set(agent.id, job);
-      void runTask(agent, task).finally(() => jobs.delete(agent.id));
+      if (task) {
+        jobs.set(agent.id, { agentId: agent.id, taskId: task.id, startedAt: Date.now() });
+        void runTask(agent, task).finally(() => jobs.delete(agent.id));
+        continue;
+      }
+      const waiting = await getWakeMessages(agent.id, inboxSince(agent));
+      if (waiting.length && takeWake(agent.id)) {
+        jobs.set(agent.id, { agentId: agent.id, taskId: null, startedAt: Date.now() });
+        void runInbox(agent, waiting).finally(() => jobs.delete(agent.id));
+      }
     }
   } catch (e) {
     console.error("[runner] tick failed", e);
@@ -87,16 +128,23 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
   }
 }
 
-/** Own unfinished work first, then work assigned to it, then any ready task nobody owns. */
-export async function pickTask(agent: Pick<Agent, "id">): Promise<Task | null> {
-  const tasks = await getTasks();
+/**
+ * Own unfinished work first, then work assigned to it, then any ready task nobody owns.
+ * A task waits while it has open subtasks or unfinished dependencies. While a lead is
+ * online, new top-level tasks nobody owns are left for the lead to plan.
+ */
+export async function pickTask(agent: Pick<Agent, "id" | "role">): Promise<Task | null> {
+  const [tasks, agents] = await Promise.all([getTasks(), getAgents()]);
   const done = new Set(tasks.filter((t) => t.column === "done" || t.column === "review").map((t) => t.id));
-  const unblocked = (t: Task) => t.dependsOn.every((d) => done.has(d));
+  const openChildren = new Set(tasks.filter((t) => t.parentTaskId && !done.has(t.id)).map((t) => t.parentTaskId));
+  const unblocked = (t: Task) => t.dependsOn.every((d) => done.has(d)) && !openChildren.has(t.id);
   const byPriority = (a: Task, b: Task) => rank(b.priority) - rank(a.priority) || a.createdAt - b.createdAt;
+  const leadOnline = agents.some((a) => a.id !== agent.id && a.role === "lead" && a.status !== "offline" && a.status !== "paused");
+  const leftForLead = (t: Task) => agent.role !== "lead" && leadOnline && !t.parentTaskId;
   const candidates = [
     tasks.filter((t) => t.ownerAgentId === agent.id && t.column === "in_progress"),
     tasks.filter((t) => t.ownerAgentId === agent.id && t.column === "ready"),
-    tasks.filter((t) => !t.ownerAgentId && t.column === "ready"),
+    tasks.filter((t) => !t.ownerAgentId && t.column === "ready" && !leftForLead(t)),
   ];
   for (const group of candidates) {
     const pick = group.filter(unblocked).sort(byPriority)[0];
@@ -134,13 +182,14 @@ async function loop(agent: Agent, task: Task, runId: string): Promise<"success" 
   const chat = createChat({
     provider: agent.provider,
     model: agent.model,
-    system: agent.instructions ? `${SYSTEM}\n\nYour own instructions from the user:\n${agent.instructions}` : SYSTEM,
+    system: systemFor(agent, SYSTEM),
     tools: AGENT_TOOLS,
   });
 
   const ctx: ToolContext = { agent, waitForApproval: (gate) => waitForDecision(agent, gate) };
 
-  let lastInboxCheck = Date.now();
+  // Messages that came in while the agent was idle arrive with the first turn.
+  let lastInboxCheck = inboxSince(agent);
   let input: { text?: string; toolOutputs?: ToolOutput[] } = { text: await brief(agent, task) };
   let nudges = 0;
 
@@ -162,8 +211,9 @@ async function loop(agent: Agent, task: Task, runId: string): Promise<"success" 
     }
 
     // Commands and new messages from the user arrive between turns.
+    const checkedAt = Date.now();
     const control = await readControl(agent, task, lastInboxCheck);
-    lastInboxCheck = Date.now();
+    lastInboxCheck = checkedAt;
     if (control.stop) {
       await addEvent({ agentId: agent.id, taskId: task.id, runId, type: "status_change", payload: { text: "Stopped by you" } });
       await updateTask(task.id, { column: "ready", ownerAgentId: null }, { agentId: agent.id });
@@ -173,6 +223,17 @@ async function loop(agent: Agent, task: Task, runId: string): Promise<"success" 
     if (!res.toolCalls.length) {
       const current = await getTask(task.id);
       if (current && (current.column === "review" || current.column === "done")) return "success";
+      const open = (await getTasks()).filter((t) => t.parentTaskId === task.id && t.column !== "review" && t.column !== "done");
+      if (open.length) {
+        await addEvent({
+          agentId: agent.id,
+          taskId: task.id,
+          runId,
+          type: "status_change",
+          payload: { text: `Waiting for ${open.length} subtask${open.length === 1 ? "" : "s"}; comes back to ${agent.name} when they're done` },
+        });
+        return "success";
+      }
       if (nudges++ >= 2) {
         await failTask(agent, task, runId, "The agent stopped without finishing the task");
         return "failed";
@@ -234,7 +295,7 @@ async function failTask(agent: Agent, task: Task, runId: string, text: string): 
 const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message"]);
 
 /** Handles pause (waits here), stop, and redirect commands, and collects new messages for the agent. */
-async function readControl(agent: Agent, task: Task, since: number): Promise<{ stop: boolean; note?: string }> {
+async function readControl(agent: Agent, task: Task | null, since: number): Promise<{ stop: boolean; note?: string }> {
   const notes: string[] = [];
   for (let paused = false; ; ) {
     const commands = await takePendingCommands(agent.id);
@@ -250,9 +311,10 @@ async function readControl(agent: Agent, task: Task, since: number): Promise<{ s
     await heartbeat(agent.id, {});
   }
   const inbox = await getInbox(agent.id, since);
-  for (const m of inbox) {
-    const who = m.fromAgentId ? `agent ${m.fromAgentId}` : "your user";
-    notes.push(`New message from ${who}${m.taskId && m.taskId !== task.id ? ` (about task ${m.taskId})` : ""}: ${m.text}`);
+  if (inbox.length) {
+    const names = await agentNames();
+    for (const m of inbox) notes.push(`New ${describeMessage(m, names, task?.id)}`);
+    await markInboxRead(agent.id, inbox[inbox.length - 1].at);
   }
   return { stop: false, note: notes.length ? notes.join("\n") : undefined };
 }
@@ -274,23 +336,152 @@ async function waitForDecision(agent: Agent, gate: GateResult): Promise<GateResu
 async function brief(agent: Agent, task: Task): Promise<string> {
   const [all, agents, history] = await Promise.all([getTasks(), getAgents(), getEvents({ taskId: task.id, limit: 20 })]);
   const subtasks = all.filter((t) => t.parentTaskId === task.id);
+  const results = await Promise.all(subtasks.map((s) => subtaskResult(s, agents)));
   const parent = task.parentTaskId ? all.find((t) => t.id === task.parentTaskId) : null;
   const lines = [
     `Your task (id ${task.id}): ${task.title}`,
     task.description && `Description:\n${task.description}`,
     task.acceptanceCriteria && `Done when:\n${task.acceptanceCriteria}`,
     parent && `This is part of a bigger task: "${parent.title}" (${parent.id}).`,
-    subtasks.length && `Existing subtasks:\n${subtasks.map((s) => `- ${s.title} [${s.column}]`).join("\n")}`,
+    subtasks.length && `Subtasks:\n${results.join("\n")}`,
     history.length &&
       `Earlier activity on this task (newest first):\n${history
         .map((e) => `- ${e.type}: ${String((e.payload as { text?: string }).text ?? "").slice(0, 300)}`)
         .join("\n")}`,
-    `Other agents: ${agents
-      .filter((a) => a.id !== agent.id)
-      .map((a) => `${a.name} (${a.id}, skills: ${a.skills.join(", ") || "general"})`)
-      .join("; ") || "none"}`,
+    teamLine(agent, agents),
+    await notesLine(),
   ];
   return lines.filter(Boolean).join("\n\n");
+}
+
+function teamLine(agent: Agent, agents: PublicAgent[]): string {
+  const others = agents
+    .filter((a) => a.id !== agent.id)
+    .map((a) => `${a.name} (${a.id}${a.role === "lead" ? ", team lead" : ""}, skills: ${a.skills.join(", ") || "general"}, ${a.status})`);
+  return `Other agents: ${others.join("; ") || "none"}`;
+}
+
+/** Short notes go in whole; past a size only the titles, and the agent reads the rest with read_notes. */
+async function notesLine(): Promise<string | null> {
+  const notes = await getNotes();
+  if (!notes.length) return null;
+  const full = notes.map((n) => `### ${n.title}\n${n.text}`).join("\n\n");
+  if (full.length <= 6_000) return `Team notes:\n${full}`;
+  return `Team notes (read them with read_notes): ${notes.map((n) => n.title).join("; ")}`;
+}
+
+/** One line per subtask, with the owner's summary once it's finished. */
+async function subtaskResult(s: Task, agents: PublicAgent[]): Promise<string> {
+  const owner = agents.find((a) => a.id === s.ownerAgentId)?.name ?? "unassigned";
+  const line = `- ${s.title} (${s.id}, ${owner}) [${s.column}]`;
+  if (s.column !== "review" && s.column !== "done") return line;
+  const [last] = (await getEvents({ taskId: s.id, limit: 10 })).filter((e) => e.type === "note");
+  const text = String((last?.payload as { text?: string } | undefined)?.text ?? "");
+  return text ? `${line}\n  Result: ${text.slice(0, 3_000)}` : line;
+}
+
+// ---------------------------------------------------------------- waking on messages
+
+/** Messages newer than this haven't been shown to the agent. Never looks back more than a day. */
+function inboxSince(agent: Agent): number {
+  return Math.max(agent.inboxReadAt ?? agent.createdAt, Date.now() - 24 * 60 * 60_000);
+}
+
+function takeWake(agentId: string): boolean {
+  const wakes = (state.agentshubWakes ??= new Map<string, number[]>());
+  const recent = (wakes.get(agentId) ?? []).filter((t: number) => Date.now() - t < 60 * 60_000);
+  if (recent.length >= MAX_WAKES_PER_HOUR) return false;
+  wakes.set(agentId, [...recent, Date.now()]);
+  return true;
+}
+
+async function agentNames(): Promise<Map<string, string>> {
+  return new Map((await getAgents()).map((a) => [a.id, a.name]));
+}
+
+function describeMessage(m: Message, names: Map<string, string>, currentTaskId?: string): string {
+  const who = m.fromAgentId ? `${names.get(m.fromAgentId) ?? "an agent"} (${m.fromAgentId})` : "your user";
+  const to = m.toAgentId ? "to you" : "to everyone";
+  const about = m.taskId && m.taskId !== currentTaskId ? ` about task ${m.taskId}` : "";
+  return `message from ${who}, ${to}${about}: ${m.text}`;
+}
+
+/** A short run with no task: the agent reads what it was sent and answers. */
+export async function runInbox(agent: Agent, waiting: Message[]): Promise<void> {
+  // Mark first, so a crash doesn't wake the agent for the same messages again and again.
+  await markInboxRead(agent.id, waiting[waiting.length - 1].at);
+  const run = await startRun(agent.id, { taskId: null, model: agent.model });
+  let outcome: "success" | "failed" | "cancelled" = "failed";
+  try {
+    outcome = await inboxLoop(agent, waiting, run.id);
+  } catch (e) {
+    const message = e instanceof MissingKeyError ? e.message : `Agent crashed: ${(e as Error).message ?? e}`;
+    console.error(`[runner] ${agent.name} reading messages:`, e);
+    await addEvent({ agentId: agent.id, runId: run.id, type: "error", payload: { text: message } });
+  } finally {
+    await endRun(agent.id, run.id, outcome);
+    await heartbeat(agent.id, { currentTaskId: null });
+  }
+}
+
+async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promise<"success" | "failed" | "cancelled"> {
+  const chat = createChat({ provider: agent.provider, model: agent.model, system: systemFor(agent, INBOX), tools: AGENT_TOOLS });
+  const ctx: ToolContext = { agent, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const [agents, tasks, names] = await Promise.all([getAgents(), getTasks(), agentNames()]);
+  const mine = tasks.filter((t) => t.ownerAgentId === agent.id && t.column !== "done");
+  let input: { text?: string; toolOutputs?: ToolOutput[] } = {
+    text: [
+      `Messages for you:\n${waiting.map((m) => `- ${describeMessage(m, names)}`).join("\n")}`,
+      mine.length ? `Your open tasks:\n${mine.map((t) => `- ${t.title} (${t.id}) [${t.column}]`).join("\n")}` : "You have no open tasks.",
+      teamLine(agent, agents),
+      await notesLine(),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
+  let lastInboxCheck = Date.now();
+
+  for (let turn = 0; turn < INBOX_MAX_TURNS; turn++) {
+    const res = await chat.send(input);
+    await addUsage(agent.id, runId, {
+      tokensIn: res.usage.tokensIn,
+      tokensOut: res.usage.tokensOut,
+      costUsd: costUsd(res.model, res.usage.tokensIn, res.usage.tokensOut),
+    });
+    await heartbeat(agent.id, { status: "active", currentTaskId: null, model: res.model });
+    if (res.stopProblem) {
+      await addEvent({ agentId: agent.id, runId, type: "error", payload: { text: res.stopProblem } });
+      return "failed";
+    }
+    if (res.text.trim()) await addEvent({ agentId: agent.id, runId, type: "note", payload: { text: res.text.slice(0, 4_000) } });
+
+    const checkedAt = Date.now();
+    const control = await readControl(agent, null, lastInboxCheck);
+    lastInboxCheck = checkedAt;
+    if (control.stop) return "cancelled";
+    if (!res.toolCalls.length) return "success";
+
+    const outputs: ToolOutput[] = [];
+    for (const call of res.toolCalls) {
+      const tool = findTool(call.name);
+      if (!tool) {
+        outputs.push({ id: call.id, name: call.name, output: `Unknown tool ${call.name}`, isError: true });
+        continue;
+      }
+      try {
+        outputs.push({ id: call.id, name: call.name, output: JSON.stringify(await tool.run(call.args, ctx)).slice(0, 50_000) });
+      } catch (e) {
+        const known = e instanceof ToolInputError || e instanceof ConflictError;
+        if (!known) console.error(`[runner] tool ${call.name} failed`, e);
+        outputs.push({ id: call.id, name: call.name, output: known ? (e as Error).message : "Internal error", isError: true });
+      }
+      if (!QUIET_TOOLS.has(call.name)) {
+        await addEvent({ agentId: agent.id, runId, type: "tool_call", payload: { tool: call.name, input: shorten(call.args) } });
+      }
+    }
+    input = { toolOutputs: outputs, text: control.note };
+  }
+  return "success";
 }
 
 function shorten(args: unknown): unknown {

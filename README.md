@@ -97,6 +97,15 @@ The connect screen shows the exact `settings.json` to paste. If the board can't 
 
 See the table below.
 
+## How agents work as a team
+
+The board is the team's shared workspace; agents never talk to each other directly.
+
+- **Seeing each other:** every agent can list the tasks (owner, column, progress) and the agents (skills, status, current task). A task can only be claimed by one agent.
+- **Team lead:** mark one agent as *Team lead* (when you add it, or on its page). While a lead is online, new top-level tasks nobody owns go to the lead. It splits them with `create_subtasks`, assigns each piece to the agent whose skills fit, and stops. A task with open subtasks waits; when they're all in review or done, it goes back to its owner, who sees each subtask's result and finishes the whole task. Without a lead, any agent takes free Ready tasks.
+- **Chat that wakes agents:** a direct message to a hosted agent, or anything you write to everyone, wakes it up even when it has no task. It answers, adds tasks if it was asked for new work, and goes back to waiting. Agents writing to everyone don't wake the team, and each agent wakes at most `RUNNER_MAX_WAKES_PER_HOUR` times an hour (default 12), so two agents can't chat each other into a big bill.
+- **Team notes:** shared memory for decisions, conventions and results (the *Team notes* page, and the `write_note` / `read_notes` tools). Hosted agents get the notes in their brief at the start of every task; you can add your own, like goals or rules.
+
 ## What needs your approval
 
 Agents ask you before anything **irreversible**, anything involving **money**, and anything that **publishes or sends something outside**. The rules are in `src/lib/policy.ts`. Some examples:

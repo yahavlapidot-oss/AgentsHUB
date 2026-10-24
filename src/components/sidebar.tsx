@@ -13,6 +13,7 @@ export function Sidebar() {
     { href: "/", label: "Main board", icon: "▦" },
     { href: "/agents", label: "Agents", icon: "◉", badge: `${online}/${agents.length}` },
     { href: "/chat", label: "Agent chat", icon: "✉" },
+    { href: "/notes", label: "Team notes", icon: "✎" },
     { href: "/usage", label: "Models & tokens", icon: "▤" },
     { href: "/approvals", label: "Approvals", icon: "✓", alert: approvals.length },
   ];

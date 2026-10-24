@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { deleteAgentAction, rotateTokenAction, sendCommandAction } from "@/app/actions";
+import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentRoleAction } from "@/app/actions";
 import { timeAgo } from "@/lib/format";
-import type { Command, Provider } from "@/lib/schema";
+import type { AgentRole, Command, Provider } from "@/lib/schema";
 import { connectSnippets } from "@/lib/snippets";
 import { useLive } from "../live";
 import { CopyBox, Modal } from "../ui";
@@ -15,6 +15,7 @@ export function AgentControls({
   paused,
   provider,
   model,
+  role,
   commands,
 }: {
   agentId: string;
@@ -22,6 +23,7 @@ export function AgentControls({
   paused: boolean;
   provider: Provider;
   model: string;
+  role: AgentRole;
   commands: Command[];
 }) {
   const router = useRouter();
@@ -64,6 +66,26 @@ export function AgentControls({
           <button type="submit" className="btn-primary mt-2" disabled={!redirect.trim()}>Send</button>
         </form>
         <p className="mt-3 text-xs text-ink-faint">The agent receives commands on its next heartbeat.</p>
+      </section>
+
+      <section className="card p-4">
+        <h2 className="mb-1 font-semibold">Team role</h2>
+        <p className="mb-3 text-sm text-ink-soft">
+          {role === "lead"
+            ? "Team lead: new tasks come here first, and it splits and assigns them to the team."
+            : "Team member: works on tasks assigned to it, and on open tasks when there's no lead online."}
+        </p>
+        <button
+          type="button"
+          className="btn-ghost border border-line"
+          onClick={async () => {
+            await setAgentRoleAction(agentId, role === "lead" ? "member" : "lead");
+            await refresh();
+            router.refresh();
+          }}
+        >
+          {role === "lead" ? "Make team member" : "Make team lead"}
+        </button>
       </section>
 
       <section className="card p-4">
