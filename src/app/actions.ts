@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import * as data from "@/lib/data";
-import { COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
+import { AGENT_KINDS, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
 
 // Server actions used by the dashboard. The user is the actor (agentId null).
 
@@ -50,6 +50,10 @@ const NewAgent = z.object({
   model: z.string().trim().min(1, "Pick a model").max(120),
   machine: z.string().trim().max(120).nullable().default(null),
   skills: z.array(z.string().trim().min(1)).default([]),
+  kind: z.enum(AGENT_KINDS).default("sdk"),
+  instructions: z.string().max(20_000).default(""),
+}).refine((a) => a.kind !== "hosted" || a.provider !== "custom", {
+  message: "AgentsHUB can run Claude, GPT or Gemini agents",
 });
 
 /** Returns the new agent's token. It is shown once and never stored in plain text. */

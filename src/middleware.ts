@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * When DASHBOARD_PASSWORD is set, the dashboard asks for it (HTTP Basic auth).
- * /api/v1 is left to per-agent tokens.
+ * /api/v1 and /api/mcp are left to per-agent tokens.
  */
 export function middleware(req: NextRequest) {
   const password = process.env.DASHBOARD_PASSWORD;
@@ -21,5 +21,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api/v1|api/health|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api/v1|api/mcp|api/health|agentshub-hook\\.mjs|_next/static|_next/image|favicon.ico).*)"],
 };

@@ -167,6 +167,7 @@ export async function createAgent(input: {
   kind?: Agent["kind"];
   machine?: string | null;
   skills?: string[];
+  instructions?: string;
 }): Promise<{ agent: PublicAgent; token: string }> {
   const token = generateAgentToken();
   const [row] = await db
@@ -179,6 +180,7 @@ export async function createAgent(input: {
       kind: input.kind ?? "sdk",
       machine: input.machine ?? null,
       skills: input.skills ?? [],
+      instructions: input.instructions ?? "",
       tokenHash: hashToken(token),
       createdAt: Date.now(),
     })
@@ -526,6 +528,27 @@ export async function requestApproval(
       .join("\n"),
   );
   return row;
+}
+
+/** The newest approval for this exact action that hasn't been used up yet. */
+export async function findOpenApproval(agentId: string, action: string): Promise<Approval | null> {
+  const [row] = await db
+    .select()
+    .from(approvals)
+    .where(and(eq(approvals.agentId, agentId), eq(approvals.action, action), isNull(approvals.consumedAt)))
+    .orderBy(desc(approvals.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Marks a decided approval as used, so the same action has to be approved again next time. */
+export async function consumeApproval(id: string): Promise<void> {
+  await db.update(approvals).set({ consumedAt: Date.now() }).where(eq(approvals.id, id));
+}
+
+/** Hosted agents (run by AgentsHUB) with the raw row, for the runner. */
+export async function getHostedAgents(): Promise<Agent[]> {
+  return db.select().from(agents).where(eq(agents.kind, "hosted")).orderBy(agents.name);
 }
 
 export async function getApproval(id: string): Promise<Approval | null> {

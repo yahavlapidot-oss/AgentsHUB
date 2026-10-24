@@ -1,7 +1,8 @@
 import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
 
 export const PROVIDERS = ["anthropic", "openai", "google", "custom"] as const;
-export const AGENT_KINDS = ["claude_code", "mcp", "sdk"] as const;
+/** "hosted" agents are run by AgentsHUB itself (see src/lib/runner); the rest connect from outside. */
+export const AGENT_KINDS = ["claude_code", "mcp", "sdk", "hosted"] as const;
 export const AGENT_STATUSES = ["active", "waiting", "paused", "offline"] as const;
 export const COLUMNS = ["backlog", "ready", "in_progress", "waiting_on_you", "review", "done"] as const;
 export const PRIORITIES = ["low", "medium", "high", "critical"] as const;
@@ -24,6 +25,8 @@ export const agents = sqliteTable("agents", {
   model: text("model").notNull(),
   machine: text("machine"),
   skills: text("skills", { mode: "json" }).$type<string[]>().notNull().default([]),
+  /** System prompt for hosted agents. */
+  instructions: text("instructions").notNull().default(""),
   status: text("status", { enum: AGENT_STATUSES }).notNull().default("offline"),
   currentTaskId: text("current_task_id"),
   lastHeartbeat: integer("last_heartbeat"),
@@ -119,6 +122,8 @@ export const approvals = sqliteTable("approvals", {
   decision: text("decision", { enum: DECISIONS }).notNull().default("pending"),
   createdAt: integer("created_at").notNull(),
   decidedAt: integer("decided_at"),
+  /** Set when an approved action is actually carried out, so one approval covers one run of it. */
+  consumedAt: integer("consumed_at"),
 });
 
 export type Agent = typeof agents.$inferSelect;
