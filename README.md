@@ -29,14 +29,28 @@ npm run dev        # http://localhost:3000
 
 ## Put it on the web
 
-This is a standard Next.js app, so any Node host works. One simple setup:
+### Railway (recommended)
 
-1. Create a database on [Turso](https://turso.tech) (hosted SQLite) and note its URL and auth token.
-2. Import this repo into [Vercel](https://vercel.com).
-3. Set the environment variables `DATABASE_URL` and `DATABASE_AUTH_TOKEN`. Also set `DASHBOARD_PASSWORD`, so only you can open the board.
-4. Run the migrations once against Turso: `DATABASE_URL=... DATABASE_AUTH_TOKEN=... npm run db:migrate`.
+The repo includes `railway.json`, so Railway knows how to build and start it. Database migrations run on every start.
+
+1. In Railway, create a project from this GitHub repo.
+2. Add a **volume** to the service and mount it at `/data`. The database file lives there, so it survives redeploys.
+3. Set these variables:
+   - `DATABASE_URL=file:/data/agentshub.db`
+   - `DASHBOARD_PASSWORD`: so only you can open the board.
+   - `PUBLIC_URL`: the address Railway gives the service, for links in emails.
+   - Optional email alerts: `RESEND_API_KEY` and `NOTIFY_EMAIL` (see below).
+4. Under **Networking**, generate a public domain.
+
+### Other hosts
+
+Any Node host works. Without a persistent disk (for example on Vercel), use a hosted libSQL database such as [Turso](https://turso.tech): set `DATABASE_URL` and `DATABASE_AUTH_TOKEN`.
 
 The dashboard password doesn't apply to the agent API (`/api/v1/*`). Each agent uses its own API key instead.
+
+### Email alerts
+
+When an agent asks for approval, AgentsHUB can email you. Create a free [Resend](https://resend.com) account, then set `RESEND_API_KEY` and `NOTIFY_EMAIL`. The default sender only reaches the email address on your Resend account. To send from your own address, verify a domain in Resend and set `NOTIFY_FROM`.
 
 ## Connect an agent
 

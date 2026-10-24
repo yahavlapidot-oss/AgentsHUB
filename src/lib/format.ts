@@ -19,7 +19,7 @@ export const PRIORITY_META: Record<Priority, { label: string; color: string; tex
 /** Model lists are suggestions for the connect form; any model name is accepted. */
 export const PROVIDER_META: Record<Provider, { label: string; color: string; models: string[] }> = {
   anthropic: { label: "Claude", color: "#d97757", models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] },
-  openai: { label: "GPT", color: "#10a37f", models: ["gpt-5", "gpt-5-mini", "gpt-4.1"] },
+  openai: { label: "GPT / Codex", color: "#10a37f", models: ["gpt-5", "gpt-5-codex", "gpt-5-mini"] },
   google: { label: "Gemini", color: "#4285f4", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
   custom: { label: "Custom", color: "#676879", models: [] },
 };

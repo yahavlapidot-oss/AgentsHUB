@@ -6,6 +6,7 @@
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
+import { boardLink, notifyByEmail } from "./notify";
 import { generateAgentToken, hashToken } from "./tokens";
 import {
   agents,
@@ -511,6 +512,19 @@ export async function requestApproval(
     .returning();
   if (input.taskId) await updateTask(input.taskId, { column: "waiting_on_you" }, { agentId });
   await db.update(agents).set({ status: "waiting" }).where(eq(agents.id, agentId));
+  const [agent] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId));
+  await notifyByEmail(
+    `[AgentsHUB] ${agent?.name ?? "An agent"} needs your approval: ${row.action}`,
+    [
+      `${agent?.name ?? "An agent"} is waiting for you before: ${row.action}`,
+      `Risk: ${row.risk}`,
+      row.reason ? `Why: ${row.reason}` : "",
+      "",
+      `Approve or deny: ${boardLink("/approvals")}`,
+    ]
+      .filter((l, i) => l || i === 3)
+      .join("\n"),
+  );
   return row;
 }
 
