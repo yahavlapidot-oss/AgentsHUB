@@ -64,7 +64,8 @@ You have been given one task. Work on it using the board tools:
 - Before anything irreversible, anything that costs money, or anything that publishes or sends something outside, call request_approval and only proceed on 'allow'.
 - Finish with complete_task. If you cannot finish, explain why in report_progress and then call complete_task with what you have.`;
 
-const NO_COMPUTER = `You have no file system. Put the full deliverable in complete_task's summary, and save files the user should get (a document, code, data) with save_artifact and their text in content.`;
+const NO_COMPUTER = `You have no file system and can't run code. Put the full deliverable in complete_task's summary, and save files the user should get (a document, code, data) with save_artifact and their text in content.
+If the task needs code to be run, tested or built into files (a zip, a build), don't hand the user a script to run instead: say so in report_progress, tell them to turn on "Cloud computer" on your agent page in AgentsHUB and move the task back to Ready, and finish with complete_task.`;
 
 const COMPUTER = `You have your own cloud computer: a fresh Linux machine with Node.js, npm, Python and pip, and internet access. It exists only for this task and is deleted when the task ends.
 - Work in ${WORKDIR}. Use write_file to create files, run_command to install packages, run the code and run its tests, and read_file / list_files to look around. Files saved on this task before are already there.
