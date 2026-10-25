@@ -134,6 +134,20 @@ The board is the team's shared workspace; agents never talk to each other direct
 - **Chat that wakes agents:** a direct message to a hosted agent, or anything you write to everyone, wakes it up even when it has no task. It answers, adds tasks if it was asked for new work, and goes back to waiting. Agents writing to everyone don't wake the team, and each agent wakes at most `RUNNER_MAX_WAKES_PER_HOUR` times an hour (default 12), so two agents can't chat each other into a big bill.
 - **Team notes:** shared memory for decisions, conventions and results (the *Team notes* page, and the `write_note` / `read_notes` tools). Hosted agents get the notes in their brief at the start of every task; you can add your own, like goals or rules.
 
+## Memory and context
+
+Agents remember on three levels, and hosted agents get what's relevant in their brief automatically:
+
+- **Team memory:** the team notes (above), shared by everyone.
+- **Each agent's own memory:** what it learned about how you want things done, its conventions, lessons from mistakes. The agent saves it with `remember` and fixes it with `forget`; it carries over between tasks and only that agent reads it. You see it, and can correct it or teach the agent something, in the **Memory** card on the agent's page.
+- **Past work and conversations:** results of finished tasks and the agent's messages. `search_memory` searches all of these together with the notes and the agent's own memory. Ranking is keyword based (BM25, any language, Hebrew included, with loose matching for word forms) and runs inside AgentsHUB, so it needs no extra service or key.
+
+The context engine (`src/lib/context.ts`) keeps what a hosted agent reads within budget:
+
+- A task's brief is built from sections in order of importance: the task, subtask results, the agent's own memory, related past work found by search, earlier activity on the task, team notes, the team list. It's capped at `CONTEXT_BRIEF_TOKENS` (default 8,000); what doesn't fit is cut short or left out, and the brief says so and names the tool that fetches it.
+- An agent woken by a message also gets the conversation before it and its own memory.
+- During a long run, once the conversation passes `CONTEXT_MAX_TOKENS` (default 80,000), old tool outputs are shortened, keeping the last few turns whole; the agent can call the tool again if it needs one back. GPT agents use OpenAI's own automatic truncation instead.
+
 ## What needs your approval
 
 Agents ask you before anything **irreversible**, anything involving **money**, and anything that **publishes or sends something outside**. The rules are in `src/lib/policy.ts`. Some examples:

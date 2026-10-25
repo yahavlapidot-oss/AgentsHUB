@@ -15,6 +15,7 @@
  * your decision on the Approvals page.
  */
 import type { ToolContext } from "../agent-tools";
+import { BRIEF_TOKENS, fitSections } from "../context";
 import { gateAction, type GateResult } from "../control";
 import {
   addEvent,
@@ -23,11 +24,13 @@ import {
   completeCommand,
   ConflictError,
   endRun,
+  getAgentMemories,
   getAgents,
   getCommands,
   getHostedAgents,
   getEvents,
   getInbox,
+  getMessages,
   getNotes,
   getTask,
   getTaskCost,
@@ -39,12 +42,13 @@ import {
   takePendingCommands,
   updateTask,
 } from "../data";
+import { searchMemory, type MemorySource } from "../memory";
 import { boardLink, notifyByEmail } from "../notify";
 import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
 import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
 import { ToolExecutor, toolsForAgent } from "../tool-hub";
-import type { Agent, Message, PublicAgent, Task } from "../schema";
+import type { Agent, AgentMemory, Message, PublicAgent, Task } from "../schema";
 import { createChat, MissingKeyError, type ToolOutput } from "./providers";
 
 const TICK_MS = Number(process.env.RUNNER_TICK_MS ?? 10_000);
@@ -61,6 +65,7 @@ You have been given one task. Work on it using the board tools:
 - After splitting, stop (reply without calling a tool). The task comes back to you when all its subtasks are done; then check and combine their results and call complete_task.
 - Talk to other agents with send_message. The user reads that chat too.
 - The team notes are the team's shared memory. Check read_notes when earlier decisions may matter, and save decisions, conventions and results others will need with write_note.
+- You also have your own memory that carries over between tasks. Save what you learn about how your user wants things done, and lessons from mistakes, with remember (fix or drop old ones with forget). Before work that may have been done or decided before, use search_memory.
 - Before anything irreversible, anything that costs money, or anything that publishes or sends something outside, call request_approval and only proceed on 'allow'.
 - Finish with complete_task. If you cannot finish, explain why in report_progress and then call complete_task with what you have.`;
 
@@ -83,7 +88,7 @@ const INBOX = `You are an AI agent on AgentsHUB, the board where your user track
 You are between tasks, and you were woken up because someone wrote to you. Read the messages and act on them with the board tools:
 - Answer questions with send_message (to the sender, or to everyone if it concerns the team).
 - If you're asked to do new work, add it with create_task (assign it to yourself or to the agent who fits) instead of doing it here; it will be picked up as a normal task.
-- Save decisions in the team notes with write_note.
+- Save decisions in the team notes with write_note, and what you learn about how your user wants things done with remember.
 - Don't reply just to acknowledge or say thanks. When you're done, reply without calling a tool.`;
 
 function systemFor(agent: Agent, base: string, computer?: boolean): string {
@@ -358,25 +363,83 @@ async function waitForDecision(agent: Agent, gate: GateResult): Promise<GateResu
   return current;
 }
 
-async function brief(agent: Agent, task: Task): Promise<string> {
-  const [all, agents, history] = await Promise.all([getTasks(), getAgents(), getEvents({ taskId: task.id, limit: 20 })]);
+/**
+ * The first message of a task run, built by the context engine: most important
+ * first, cut to the brief's token budget (CONTEXT_BRIEF_TOKENS).
+ */
+export async function brief(agent: Agent, task: Task, budget = BRIEF_TOKENS): Promise<string> {
+  const [all, agents, history, memories, notes] = await Promise.all([
+    getTasks(),
+    getAgents(),
+    getEvents({ taskId: task.id, limit: 20 }),
+    getAgentMemories(agent.id),
+    getNotes(),
+  ]);
   const subtasks = all.filter((t) => t.parentTaskId === task.id);
   const results = await Promise.all(subtasks.map((s) => subtaskResult(s, agents)));
   const parent = task.parentTaskId ? all.find((t) => t.id === task.parentTaskId) : null;
-  const lines = [
-    `Your task (id ${task.id}): ${task.title}`,
-    task.description && `Description:\n${task.description}`,
-    task.acceptanceCriteria && `Done when:\n${task.acceptanceCriteria}`,
-    parent && `This is part of a bigger task: "${parent.title}" (${parent.id}).`,
-    subtasks.length && `Subtasks:\n${results.join("\n")}`,
-    history.length &&
-      `Earlier activity on this task (newest first):\n${history
-        .map((e) => `- ${e.type}: ${String((e.payload as { text?: string }).text ?? "").slice(0, 300)}`)
-        .join("\n")}`,
-    teamLine(agent, agents),
-    await notesLine(),
-  ];
-  return lines.filter(Boolean).join("\n\n");
+  const notesText = notes.map((n) => `### ${n.title}\n${n.text}`).join("\n\n");
+  const notesWhole = notesText.length <= 6_000;
+  // Team notes short enough to go in whole aren't searched again.
+  const sources: MemorySource[] = notesWhole ? ["task_result", "message"] : ["task_result", "team_note", "message"];
+  const related = (await searchMemory(agent.id, `${task.title}\n${task.description}`, { sources, limit: 6 }))
+    .filter((h) => h.id !== task.id && !subtasks.some((s) => s.id === h.id))
+    .slice(0, 4);
+  return fitSections(
+    [
+      {
+        name: "the task description",
+        cuttable: true,
+        moreWith: "get_task",
+        text: [
+          `Your task (id ${task.id}): ${task.title}`,
+          task.description && `Description:\n${task.description}`,
+          task.acceptanceCriteria && `Done when:\n${task.acceptanceCriteria}`,
+          parent && `This is part of a bigger task: "${parent.title}" (${parent.id}).`,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      },
+      { name: "subtask results", cuttable: true, moreWith: "get_task", text: subtasks.length && `Subtasks:\n${results.join("\n")}` },
+      { name: "your memory", cuttable: true, moreWith: "search_memory", text: memoryLine(memories) },
+      {
+        name: "related memory",
+        cuttable: true,
+        moreWith: "search_memory",
+        text:
+          related.length &&
+          `Possibly related, from earlier work (use search_memory for more):\n${related
+            .map((h) => `- [${h.source}] ${h.title} (${h.id}): ${h.snippet.replace(/\s+/g, " ").slice(0, 400)}`)
+            .join("\n")}`,
+      },
+      {
+        name: "earlier activity on this task",
+        cuttable: true,
+        moreWith: "get_task",
+        text:
+          history.length &&
+          `Earlier activity on this task (newest first):\n${history
+            .map((e) => `- ${e.type}: ${String((e.payload as { text?: string }).text ?? "").slice(0, 300)}`)
+            .join("\n")}`,
+      },
+      {
+        name: "team notes",
+        cuttable: true,
+        moreWith: "read_notes",
+        text: notes.length && (notesWhole ? `Team notes:\n${notesText}` : `Team notes (read them with read_notes): ${notes.map((n) => n.title).join("; ")}`),
+      },
+      { name: "the team list", moreWith: "list_agents", text: teamLine(agent, agents) },
+    ],
+    budget,
+  ).text;
+}
+
+/** The agent's own memory: whole when short, otherwise the titles. */
+function memoryLine(memories: AgentMemory[]): string | null {
+  if (!memories.length) return null;
+  const full = memories.map((m) => `### ${m.title}\n${m.text}`).join("\n\n");
+  if (full.length <= 4_000) return `Your own memory (only you see it):\n${full}`;
+  return `Your own memory (only you see it; search it with search_memory): ${memories.map((m) => m.title).join("; ")}`;
 }
 
 function teamLine(agent: Agent, agents: PublicAgent[]): string {
@@ -384,15 +447,6 @@ function teamLine(agent: Agent, agents: PublicAgent[]): string {
     .filter((a) => a.id !== agent.id)
     .map((a) => `${a.name} (${a.id}${a.role === "lead" ? ", team lead" : ""}, skills: ${a.skills.join(", ") || "general"}, ${a.status})`);
   return `Other agents: ${others.join("; ") || "none"}`;
-}
-
-/** Short notes go in whole; past a size only the titles, and the agent reads the rest with read_notes. */
-async function notesLine(): Promise<string | null> {
-  const notes = await getNotes();
-  if (!notes.length) return null;
-  const full = notes.map((n) => `### ${n.title}\n${n.text}`).join("\n\n");
-  if (full.length <= 6_000) return `Team notes:\n${full}`;
-  return `Team notes (read them with read_notes): ${notes.map((n) => n.title).join("; ")}`;
 }
 
 /** One line per subtask, with the owner's summary once it's finished. */
@@ -456,16 +510,7 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
   const executor = new ToolExecutor(tools, ctx, { runId });
   const [agents, tasks, names] = await Promise.all([getAgents(), getTasks(), agentNames()]);
   const mine = tasks.filter((t) => t.ownerAgentId === agent.id && t.column !== "done");
-  let input: { text?: string; toolOutputs?: ToolOutput[] } = {
-    text: [
-      `Messages for you:\n${waiting.map((m) => `- ${describeMessage(m, names)}`).join("\n")}`,
-      mine.length ? `Your open tasks:\n${mine.map((t) => `- ${t.title} (${t.id}) [${t.column}]`).join("\n")}` : "You have no open tasks.",
-      teamLine(agent, agents),
-      await notesLine(),
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-  };
+  let input: { text?: string; toolOutputs?: ToolOutput[] } = { text: await inboxBrief(agent, waiting, { agents, mine, names }) };
   let lastInboxCheck = Date.now();
 
   for (let turn = 0; turn < INBOX_MAX_TURNS; turn++) {
@@ -493,6 +538,53 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
     input = { toolOutputs: outputs, text: control.note };
   }
   return "success";
+}
+
+/** What an agent woken by messages reads first: the messages, the conversation before them, and its memory. */
+export async function inboxBrief(
+  agent: Agent,
+  waiting: Message[],
+  ctx: { agents: PublicAgent[]; mine: Task[]; names: Map<string, string> },
+  budget = BRIEF_TOKENS,
+): Promise<string> {
+  const [earlier, memories, notes] = await Promise.all([getMessages({ agentId: agent.id, limit: 30 }), getAgentMemories(agent.id), getNotes()]);
+  const newIds = new Set(waiting.map((m) => m.id));
+  const before = earlier.filter((m) => !newIds.has(m.id)).slice(-12);
+  const notesText = notes.map((n) => `### ${n.title}\n${n.text}`).join("\n\n");
+  return fitSections(
+    [
+      { name: "the messages", cuttable: true, moreWith: "check_inbox", text: `Messages for you:\n${waiting.map((m) => `- ${describeMessage(m, ctx.names)}`).join("\n")}` },
+      {
+        name: "the conversation before",
+        cuttable: true,
+        moreWith: "search_memory",
+        text: before.length && `Your conversation before these messages (oldest first):\n${before.map((m) => `- ${describeSent(m, agent, ctx.names)}`).join("\n")}`,
+      },
+      {
+        name: "your open tasks",
+        cuttable: true,
+        moreWith: "list_tasks",
+        text: ctx.mine.length ? `Your open tasks:\n${ctx.mine.map((t) => `- ${t.title} (${t.id}) [${t.column}]`).join("\n")}` : "You have no open tasks.",
+      },
+      { name: "your memory", cuttable: true, moreWith: "search_memory", text: memoryLine(memories) },
+      { name: "the team list", moreWith: "list_agents", text: teamLine(agent, ctx.agents) },
+      {
+        name: "team notes",
+        cuttable: true,
+        moreWith: "read_notes",
+        text: notes.length && (notesText.length <= 6_000 ? `Team notes:\n${notesText}` : `Team notes (read them with read_notes): ${notes.map((n) => n.title).join("; ")}`),
+      },
+    ],
+    budget,
+  ).text;
+}
+
+function describeSent(m: Message, agent: Agent, names: Map<string, string>): string {
+  if (m.fromAgentId === agent.id) {
+    const to = m.toAgentId ? names.get(m.toAgentId) ?? m.toAgentId : "everyone";
+    return `you to ${to}: ${m.text.slice(0, 1_000)}`;
+  }
+  return `${describeMessage(m, names)}`.slice(0, 1_100);
 }
 
 function sleep(ms: number): Promise<void> {

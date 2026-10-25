@@ -1,12 +1,14 @@
 /**
  * One chat loop per provider, behind the same small interface, so the runner
  * doesn't care whether an agent is Claude, GPT or Gemini. Each adapter keeps its
- * own conversation history in the provider's native shape.
+ * own conversation history in the provider's native shape, and shortens old
+ * tool outputs in it once it grows past the context budget (see ../context.ts).
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI, type Content, type FunctionDeclaration } from "@google/genai";
 import OpenAI from "openai";
 import type { AgentTool } from "../agent-tools";
+import { estimateTokens, HISTORY_TOKENS, isTrimmed, KEEP_RECENT, trimmedOutput } from "../context";
 import type { Provider } from "../schema";
 
 export type ToolCall = { id: string; name: string; args: unknown };
@@ -77,6 +79,7 @@ class ClaudeChat implements Chat {
     }
     if (input.text) content.push({ type: "text", text: input.text });
     this.messages.push({ role: "user", content });
+    compactClaudeMessages(this.messages);
 
     const fallback = CLAUDE_FALLBACK_MODELS.has(this.opts.model);
     const res = await this.client.beta.messages.create({
@@ -141,6 +144,8 @@ class OpenAIChat implements Chat {
       instructions: this.opts.system,
       input: items,
       previous_response_id: this.previousId,
+      // OpenAI keeps the history; past the model's window it drops the oldest items.
+      truncation: "auto",
       tools: this.opts.tools.map((t) => ({
         type: "function" as const,
         name: t.name,
@@ -190,6 +195,7 @@ class GeminiChat implements Chat {
     }
     if (input.text) parts.push({ text: input.text });
     this.contents.push({ role: "user", parts });
+    compactGeminiContents(this.contents);
 
     const res = await this.client.models.generateContent({
       model: this.opts.model,
@@ -228,6 +234,54 @@ class GeminiChat implements Chat {
       stopProblem,
     };
   }
+}
+
+// ---------------------------------------------------------------- shortening old tool outputs
+
+/**
+ * Shortens tool results older than the last few messages while the history is
+ * over budget. Only tool outputs change: the model's own turns (thinking and
+ * signatures included) and the brief stay as they were.
+ */
+export function compactClaudeMessages(messages: Anthropic.Beta.BetaMessageParam[], maxTokens = HISTORY_TOKENS): number {
+  let size = estimateTokens(JSON.stringify(messages));
+  let trimmed = 0;
+  for (let i = 0; i < messages.length - KEEP_RECENT && size > maxTokens; i++) {
+    const m = messages[i];
+    if (m.role !== "user" || typeof m.content === "string") continue;
+    for (const block of m.content) {
+      if (block.type !== "tool_result" || typeof block.content !== "string" || isTrimmed(block.content)) continue;
+      const short = trimmedOutput(block.content);
+      if (short === block.content) continue;
+      size -= estimateTokens(block.content) - estimateTokens(short);
+      block.content = short;
+      trimmed++;
+    }
+  }
+  return trimmed;
+}
+
+export function compactGeminiContents(contents: Content[], maxTokens = HISTORY_TOKENS): number {
+  let size = estimateTokens(JSON.stringify(contents));
+  let trimmed = 0;
+  for (let i = 0; i < contents.length - KEEP_RECENT && size > maxTokens; i++) {
+    const c = contents[i];
+    if (c.role !== "user") continue;
+    for (const part of c.parts ?? []) {
+      const res = part.functionResponse?.response as { output?: unknown; error?: unknown } | undefined;
+      if (!res) continue;
+      for (const key of ["output", "error"] as const) {
+        const value = res[key];
+        if (typeof value !== "string" || isTrimmed(value)) continue;
+        const short = trimmedOutput(value);
+        if (short === value) continue;
+        size -= estimateTokens(value) - estimateTokens(short);
+        res[key] = short;
+        trimmed++;
+      }
+    }
+  }
+  return trimmed;
 }
 
 function safeJson(s: string): unknown {

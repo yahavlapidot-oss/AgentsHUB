@@ -152,6 +152,25 @@ export const notes = sqliteTable("notes", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+/**
+ * One agent's own memory: what it learned about how its user wants things done,
+ * its own conventions and lessons. Only that agent sees it (and the user, on the
+ * agent page). Shared knowledge goes in the team notes instead. One entry per title.
+ */
+export const agentMemories = sqliteTable(
+  "agent_memories",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id").notNull(),
+    title: text("title").notNull(),
+    text: text("text").notNull(),
+    taskId: text("task_id"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("agent_memories_agent_title").on(t.agentId, t.title)],
+);
+
 /** Cloud computers (see src/lib/sandbox). One per hosted run that needs one; closed when the run ends. */
 export const sandboxes = sqliteTable(
   "sandboxes",
@@ -211,6 +230,7 @@ export type Message = typeof messages.$inferSelect;
 export type Command = typeof commands.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;
 export type Note = typeof notes.$inferSelect;
+export type AgentMemory = typeof agentMemories.$inferSelect;
 export type Sandbox = typeof sandboxes.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
 /** Artifact without its bytes, for lists. */

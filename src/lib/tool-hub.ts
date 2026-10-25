@@ -11,7 +11,7 @@ import { addEvent, ConflictError } from "./data";
 import type { Agent } from "./schema";
 import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "./sandbox/tools";
 
-export const TOOL_CATEGORIES = ["board", "team", "files", "computer", "control"] as const;
+export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "computer", "control"] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
 
 /**
@@ -34,6 +34,7 @@ export type ToolInfo = {
 export const CATEGORY_LABELS: Record<ToolCategory, string> = {
   board: "Tasks",
   team: "Team",
+  memory: "Memory",
   files: "Files",
   computer: "Cloud computer",
   control: "Reporting and approvals",
@@ -48,8 +49,11 @@ export const CATALOG: Record<string, ToolInfo> = {
   list_agents: { category: "team", risk: "read" },
   send_message: { category: "team", risk: "write" },
   check_inbox: { category: "team", risk: "read", core: true },
-  write_note: { category: "team", risk: "write" },
-  read_notes: { category: "team", risk: "read" },
+  write_note: { category: "memory", risk: "write" },
+  read_notes: { category: "memory", risk: "read" },
+  remember: { category: "memory", risk: "write" },
+  forget: { category: "memory", risk: "write" },
+  search_memory: { category: "memory", risk: "read" },
   save_artifact: { category: "files", risk: "write" },
   report_progress: { category: "control", risk: "write", core: true },
   complete_task: { category: "control", risk: "write", core: true },
@@ -92,7 +96,7 @@ const MAX_SAME_CALL = Number(process.env.TOOL_MAX_SAME_CALL ?? 5);
 /** Tools that write their own activity line. */
 const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message", "save_artifact", ...SANDBOX_LOGGED_TOOLS]);
 /** Calls that are meant to repeat (polling). */
-const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task"]);
+const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes"]);
 
 /**
  * Runs one agent's tool calls for one run, the same way for every provider:
