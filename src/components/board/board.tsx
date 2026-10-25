@@ -66,7 +66,7 @@ export function Board() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="flex items-center gap-1" aria-label="Filter by agent">
+          <div className="-mx-1 flex max-w-full items-center gap-1 overflow-x-auto px-1 py-0.5 sm:max-w-md" aria-label="Filter by agent">
             <FilterChip active={agentFilter === "all"} onClick={() => setAgentFilter("all")}>
               All
             </FilterChip>
@@ -75,7 +75,7 @@ export function Board() {
                 key={a.id}
                 type="button"
                 onClick={() => setAgentFilter(agentFilter === a.id ? "all" : a.id)}
-                className={`rounded-full p-0.5 ${agentFilter === a.id ? "ring-2 ring-brand" : "opacity-80 hover:opacity-100"}`}
+                className={`shrink-0 rounded-full p-0.5 ${agentFilter === a.id ? "ring-2 ring-brand" : "opacity-80 hover:opacity-100"}`}
                 aria-pressed={agentFilter === a.id}
                 aria-label={`Only ${a.name}`}
               >
@@ -109,7 +109,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+      className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${
         active ? "bg-brand-soft text-brand" : "text-ink-soft hover:bg-black/5"
       }`}
     >

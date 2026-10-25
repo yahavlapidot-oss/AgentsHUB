@@ -8,11 +8,18 @@
 
 body {
   @apply bg-canvas text-ink antialiased;
+  /* No grey flash on tap. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Pages with and without a scrollbar line up, so moving between them doesn't jump sideways. */
+html {
+  scrollbar-gutter: stable;
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-50;
+    @apply inline-flex select-none items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition duration-150 active:scale-[0.97] disabled:active:scale-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-50;
   }
   .btn-primary {
     @apply btn bg-brand text-white hover:bg-[#3c4bd8];

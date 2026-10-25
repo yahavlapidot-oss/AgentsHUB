@@ -100,7 +100,7 @@ export function ColorPicker<T extends string>({
         {meta.label}
       </button>
       {open && (
-        <div className="absolute left-1/2 top-full z-30 mt-1 w-44 -translate-x-1/2 rounded-lg border border-line bg-white p-2 shadow-xl">
+        <div className="absolute left-1/2 top-full z-30 mt-1 w-44 -translate-x-1/2 animate-fade-in rounded-lg border border-line bg-white p-2 shadow-xl">
           {(Object.keys(options) as T[]).map((k) => (
             <button
               key={k}
@@ -149,13 +149,13 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 grid items-end bg-black/40 sm:place-items-center sm:p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid animate-fade-in items-end bg-black/40 sm:place-items-center sm:p-4" onMouseDown={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onMouseDown={(e) => e.stopPropagation()}
-        className={`max-h-[92dvh] w-full overflow-y-auto rounded-t-xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-xl sm:p-6 ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}
+        className={`max-h-[92dvh] w-full animate-sheet-up overflow-y-auto overscroll-contain rounded-t-xl bg-white p-4 sm:animate-pop-in pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-xl sm:p-6 ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <h2 className="text-lg font-semibold">{title}</h2>

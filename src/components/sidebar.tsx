@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { EmergencyStopButton } from "./emergency-stop";
 import { useLive } from "./live";
@@ -52,10 +52,11 @@ export function Sidebar() {
             <li key={it.href}>
               <Link
                 href={it.href}
-                className={`flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors ${
+                className={`relative flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors ${
                   active ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
+                <LinkPending className="inset-y-1.5 left-0 w-0.5" />
                 <span className="w-5 text-center text-base leading-none" aria-hidden>
                   {it.icon}
                 </span>
@@ -74,4 +75,11 @@ export function Sidebar() {
       </div>
     </nav>
   );
+}
+
+/** A small bar on a nav link from the moment it's clicked until its page shows. Put it inside a relative Link. */
+export function LinkPending({ className }: { className: string }) {
+  const { pending } = useLinkStatus();
+  if (!pending) return null;
+  return <span aria-hidden className={`pointer-events-none absolute animate-fade-in-late rounded-full bg-brand ${className}`} />;
 }

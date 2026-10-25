@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { useLive } from "./live";
 
-/** Re-renders a server page each time the live snapshot updates. */
+/** Re-renders a server page when the live data changes (not on every poll). */
 export function RefreshOnTick() {
   const router = useRouter();
-  const { generatedAt } = useLive();
+  const { version } = useLive();
   const first = useRef(true);
   useEffect(() => {
     if (first.current) {
@@ -15,6 +15,6 @@ export function RefreshOnTick() {
       return;
     }
     router.refresh();
-  }, [generatedAt, router]);
+  }, [version, router]);
   return null;
 }

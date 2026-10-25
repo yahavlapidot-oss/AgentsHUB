@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { updateTaskAction } from "@/app/actions";
 import { COLUMN_META, PRIORITY_META, timeAgo } from "@/lib/format";
 import { COLUMNS, type Column, type Task } from "@/lib/schema";
 import { useLive } from "../live";
@@ -9,7 +8,7 @@ import { AgentAvatar, ProgressBar } from "../ui";
 
 /** Drag cards between columns to change their status. */
 export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
-  const { agents, refresh } = useLive();
+  const { agents, updateTask } = useLive();
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<Column | null>(null);
 
@@ -19,8 +18,7 @@ export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: stri
     setOver(null);
     const task = tasks.find((t) => t.id === id);
     if (!task || task.column === col) return;
-    await updateTaskAction(task.id, { column: col });
-    await refresh();
+    await updateTask(task.id, { column: col }, `Moved to ${COLUMN_META[col].label}`);
   }
 
   return (

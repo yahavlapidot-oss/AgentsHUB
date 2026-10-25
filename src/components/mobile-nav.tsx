@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { EmergencyStopButton } from "./emergency-stop";
-import { isActive, useNavItems, type NavItem } from "./sidebar";
+import { LinkPending, isActive, useNavItems, type NavItem } from "./sidebar";
 
 /** The pages that get their own tab on a phone; the rest are under More. */
 const TABS = ["/", "/live", "/approvals", "/agents"];
@@ -49,9 +49,9 @@ export function MobileNav() {
       </nav>
 
       {more && (
-        <div className="fixed inset-0 z-20 bg-black/30 sm:hidden" onClick={() => setMore(false)}>
+        <div className="fixed inset-0 z-20 animate-fade-in bg-black/30 sm:hidden" onClick={() => setMore(false)}>
           <ul
-            className="absolute inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] grid grid-cols-2 gap-1 rounded-t-xl bg-white p-3 shadow-2xl"
+            className="absolute inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] grid animate-sheet-up grid-cols-2 gap-1 rounded-t-xl bg-white p-3 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {rest.map((it) => (
@@ -82,6 +82,7 @@ function Tab({ item, active }: { item: NavItem; active: boolean }) {
       aria-current={active ? "page" : undefined}
       className={`relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] ${active ? "text-brand" : "text-ink-soft"}`}
     >
+      <LinkPending className="inset-x-[30%] top-0 h-0.5" />
       <span className="text-lg leading-none" aria-hidden>{item.icon}</span>
       {short}
       {!!item.alert && (

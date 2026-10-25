@@ -127,14 +127,11 @@ function Head({ children, center }: { children: React.ReactNode; center?: boolea
 }
 
 function Row({ task, onOpen }: { task: Task; onOpen: () => void }) {
-  const { agents, messages, refresh } = useLive();
+  const { agents, messages, updateTask } = useLive();
   const owner = agents.find((a) => a.id === task.ownerAgentId);
   const updates = messages.filter((m) => m.taskId === task.id).length;
 
-  async function patch(p: Parameters<typeof updateTaskAction>[1]) {
-    await updateTaskAction(task.id, p);
-    await refresh();
-  }
+  const patch = (p: Parameters<typeof updateTaskAction>[1]) => updateTask(task.id, p);
 
   return (
     <div className={`${GRID} group border-b border-line text-sm last:border-b-0 hover:bg-[#f5f6f8]`}>

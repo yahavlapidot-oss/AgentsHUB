@@ -26,6 +26,15 @@ test("create a task on the board", async ({ page }) => {
   await page.getByLabel("Title").fill("E2E: add a health page");
   await page.getByRole("button", { name: "Create task" }).click();
   await expect(page.getByText("E2E: add a health page").filter({ visible: true }).first()).toBeVisible();
+
+  // A status change shows at once and is still there after the next poll.
+  await page.getByText("E2E: add a health page").filter({ visible: true }).first().click();
+  const drawer = page.locator('[aria-label="Task: E2E: add a health page"]');
+  await drawer.getByRole("button", { name: "Backlog", exact: true }).click();
+  await drawer.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(drawer.getByRole("button", { name: "Done" })).toBeVisible({ timeout: 500 });
+  await page.waitForTimeout(3500);
+  await expect(drawer.getByRole("button", { name: "Done" })).toBeVisible();
 });
 
 test("approve an agent's request", async ({ page }) => {
@@ -33,6 +42,7 @@ test("approve an agent's request", async ({ page }) => {
   const item = page.locator("li", { hasText: "Send the launch email to 240 customers" });
   await expect(item).toBeVisible();
   await item.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Approved" })).toBeVisible();
   await expect(page.getByText("History")).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
 });

@@ -2,9 +2,11 @@ import type { Metadata, Viewport } from "next";
 import { Figtree, JetBrains_Mono } from "next/font/google";
 import { EmergencyStopBanner } from "@/components/emergency-stop";
 import { LiveProvider } from "@/components/live";
+import { Toaster } from "@/components/toast";
 import { MobileNav } from "@/components/mobile-nav";
 import { Sidebar } from "@/components/sidebar";
 import { getSnapshot } from "@/lib/data";
+import { contentTag } from "@/lib/etag";
 import "./globals.css";
 
 const sans = Figtree({ subsets: ["latin"], variable: "--font-sans" });
@@ -32,7 +34,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body className="font-sans">
-        <LiveProvider initial={initial}>
+        <LiveProvider initial={initial} initialTag={contentTag(initial)}>
           <div className="flex min-h-dvh flex-col sm:flex-row">
             <Sidebar />
             <MobileNav />
@@ -41,6 +43,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {children}
             </main>
           </div>
+          <Toaster />
         </LiveProvider>
       </body>
     </html>
