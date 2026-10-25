@@ -48,6 +48,7 @@ import {
 } from "../data";
 import { searchMemory, type MemorySource } from "../memory";
 import { budgetProblem } from "../budgets";
+import { recordProblem, runnerStarted, runnerTicked } from "../monitor";
 import { boardLink, notifyByEmail } from "../notify";
 import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
@@ -127,6 +128,7 @@ export function startRunner(): void {
   const timer = setInterval(() => void tick(jobs), TICK_MS);
   timer.unref?.();
   state.agentshubRunner = { timer, jobs };
+  runnerStarted();
   console.log(`[runner] hosted agents runner started (every ${TICK_MS / 1000}s)`);
   void tick(jobs);
 }
@@ -136,6 +138,7 @@ let ticking = false;
 async function tick(jobs: Map<string, Job>): Promise<void> {
   if (ticking) return;
   ticking = true;
+  let problem: string | null = null;
   try {
     // Nothing starts while the emergency stop is on.
     if (await getEmergencyStop()) return;
@@ -158,8 +161,10 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
       }
     }
   } catch (e) {
-    console.error("[runner] tick failed", e);
+    problem = (e as Error).message ?? String(e);
+    await recordProblem("runner", e);
   } finally {
+    runnerTicked(problem);
     ticking = false;
   }
 }

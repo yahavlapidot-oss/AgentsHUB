@@ -231,11 +231,39 @@ Token counts come from each SDK's response: `usage.input_tokens` and `usage.outp
 
 ```bash
 npm run typecheck
-npm test
+npm test            # unit and integration tests (vitest)
 npm run build
+npm run test:e2e    # browser tests (Playwright), on desktop and phone sizes; needs the build
 ```
 
-GitHub Actions runs the same three on every pull request (`.github/workflows/ci.yml`).
+GitHub Actions runs all four on every pull request (`.github/workflows/ci.yml`). The browser tests start the built app on a fresh database filled by `e2e/seed.mts`, with the runner off, and cover the password, creating a task, approving a request, the Live workspace, budgets, file filters, the emergency stop, the agent API and MCP, the status page, and that no page is wider than a phone screen.
+
+### Load test
+
+`scripts/load-test.mjs` sends a mix like real traffic (board and Live polls, agent heartbeats, MCP calls, events) from many workers at once and prints requests per second and latency per endpoint. Run it against a local copy, not production:
+
+```bash
+BASE_URL=http://localhost:3000 DASHBOARD_PASSWORD=... AGENT_TOKEN=ahub_... node scripts/load-test.mjs 20 20
+```
+
+On a database with 12 agents, 400 tasks and 16,000 events, one server handled 20 at once at about 70 requests a second, p95 under 0.6 s and no errors. That is far more than a team's tabs and agents send (each open tab polls every 2 to 3 seconds).
+
+## Security
+
+- **Dashboard:** HTTP Basic auth with `DASHBOARD_PASSWORD`, compared in constant time. After 10 wrong passwords an address waits 15 minutes. In production the dashboard is locked (503) until a password is set, unless `DASHBOARD_OPEN=1`.
+- **Agents:** each has its own key; only its SHA-256 hash is stored. Rotate or delete a key on the agent's page. Request bodies over `API_MAX_BODY_BYTES` are refused (413).
+- **Headers:** `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS in production, no `X-Powered-By`.
+- **Agent-made files** are served in a CSP sandbox, so an HTML page an agent wrote can't read the dashboard.
+- **Cloud computers** start without the server's secrets, and risky commands go through approvals.
+- **Dependencies:** `npm audit --omit=dev` is clean. The remaining dev-only notices are in drizzle-kit's bundled esbuild (its dev server, which we don't use) and Tailwind 3's selector parser, neither of which reaches the running app.
+
+## Monitoring
+
+- `GET /api/health` (open, no data) says whether the database answers and the runner is going round; it returns 503 when the database is down. Railway calls it on every deploy.
+- The **System status** page shows the database, runner, file bucket, email, cloud computers, emergency stop and approvals, plus server problems since the last restart.
+- Server problems (a runner round that fails, an error nothing else caught, a broken bucket) are emailed, at most once per `ALERT_EVERY_MS` for each kind. Agent errors on tasks go to the task, the audit log and email, as before.
+
+See [docs/launch-checklist.md](docs/launch-checklist.md) before going live.
 
 ## Backups and rolling back
 

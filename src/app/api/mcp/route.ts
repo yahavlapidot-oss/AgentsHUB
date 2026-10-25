@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { MAX_BODY_BYTES, readJson, TooLarge } from "@/lib/api";
 import { findTool, ToolInputError } from "@/lib/agent-tools";
 import { toolsForAgent } from "@/lib/tool-hub";
 import { ConflictError, findAgentByToken, heartbeat } from "@/lib/data";
@@ -37,8 +38,11 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
+    body = await readJson(req);
+  } catch (e) {
+    if (e instanceof TooLarge) {
+      return NextResponse.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: `Request is over ${MAX_BODY_BYTES} bytes` } }, { status: 413 });
+    }
     return NextResponse.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, { status: 400 });
   }
 

@@ -8,3 +8,8 @@ data/
 .env.local
 next-env.d.ts
 *.tsbuildinfo
+e2e/.state.json
+test-results/
+playwright-report/
+*.db-*
+e2e/backups/

@@ -113,7 +113,7 @@ export const runs = sqliteTable(
     tokensOut: integer("tokens_out").notNull().default(0),
     costUsd: real("cost_usd").notNull().default(0),
   },
-  (t) => [index("runs_agent_idx").on(t.agentId)],
+  (t) => [index("runs_agent_idx").on(t.agentId), index("runs_task_idx").on(t.taskId), index("runs_started_idx").on(t.startedAt)],
 );
 
 export const events = sqliteTable(
@@ -127,7 +127,7 @@ export const events = sqliteTable(
     at: integer("at").notNull(),
     payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
   },
-  (t) => [index("events_task_idx").on(t.taskId), index("events_at_idx").on(t.at)],
+  (t) => [index("events_task_idx").on(t.taskId), index("events_at_idx").on(t.at), index("events_run_idx").on(t.runId)],
 );
 
 /** Agent-to-agent (and user-to-agent) chat. fromAgentId null means the user wrote it. */
