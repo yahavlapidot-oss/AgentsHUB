@@ -34,14 +34,14 @@ export function TableView({
     );
   }
   return (
-    <div className="flex flex-col gap-8 overflow-x-auto pb-4">
+    <div className="flex flex-col gap-6 pb-4 sm:gap-8 sm:overflow-x-auto">
       {COLUMNS.map((col) => {
         const rows = tasks.filter((t) => t.column === col);
         if (!rows.length) return null;
         const meta = COLUMN_META[col];
         const isCollapsed = collapsed.has(col);
         return (
-          <section key={col} className="min-w-[1000px]">
+          <section key={col} className="sm:min-w-[1000px]">
             <button
               type="button"
               className="mb-2 flex items-center gap-2 text-[15px] font-semibold"
@@ -60,7 +60,14 @@ export function TableView({
               <span className="text-xs font-normal text-ink-faint">{rows.length} {rows.length === 1 ? "task" : "tasks"}</span>
             </button>
             {!isCollapsed && (
-              <div className="overflow-hidden rounded-md border border-line bg-white" style={{ borderLeft: `6px solid ${meta.color}` }}>
+              <ul className="flex flex-col gap-2 sm:hidden">
+                {rows.map((t) => (
+                  <PhoneRow key={t.id} task={t} onOpen={() => onOpen(t.id)} />
+                ))}
+              </ul>
+            )}
+            {!isCollapsed && (
+              <div className="hidden overflow-hidden rounded-md border border-line bg-white sm:block" style={{ borderLeft: `6px solid ${meta.color}` }}>
                 <div className={`${GRID} border-b border-line text-xs font-medium text-ink-soft`}>
                   <Head>Task</Head>
                   <Head center>Owner</Head>
@@ -79,6 +86,39 @@ export function TableView({
         );
       })}
     </div>
+  );
+}
+
+/** On a phone each task is a card you tap; status, owner and priority change in its details. */
+function PhoneRow({ task, onOpen }: { task: Task; onOpen: () => void }) {
+  const { agents, messages } = useLive();
+  const owner = agents.find((a) => a.id === task.ownerAgentId);
+  const updates = messages.filter((m) => m.taskId === task.id).length;
+  const meta = COLUMN_META[task.column];
+  const priority = PRIORITY_META[task.priority];
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="card flex w-full flex-col gap-2 p-3 text-left active:bg-canvas"
+        style={{ borderLeft: `5px solid ${meta.color}` }}
+      >
+        <span className="flex items-start gap-2">
+          <span className="min-w-0 flex-1 font-medium leading-snug">{task.title}</span>
+          {updates > 0 && <span className="shrink-0 rounded-full bg-brand-soft px-1.5 text-[11px] font-medium text-brand">{updates}</span>}
+        </span>
+        <span className="flex items-center gap-2 text-xs text-ink-soft">
+          <AgentAvatar agent={owner} size={22} />
+          <span className="min-w-0 truncate">{owner?.name ?? "Unassigned"}</span>
+          <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 font-medium" style={{ background: priority.color, color: priority.text }}>
+            {priority.label}
+          </span>
+          <span className="shrink-0">{timeAgo(task.updatedAt)}</span>
+        </span>
+        <ProgressBar pct={task.progressPct} color={meta.color} />
+      </button>
+    </li>
   );
 }
 

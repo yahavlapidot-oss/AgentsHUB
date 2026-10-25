@@ -24,7 +24,7 @@ export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: stri
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
+    <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:mx-0 sm:snap-none sm:gap-4 sm:px-0">
       {COLUMNS.map((col) => {
         const meta = COLUMN_META[col];
         const cards = tasks.filter((t) => t.column === col);
@@ -37,7 +37,7 @@ export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: stri
             }}
             onDragLeave={() => setOver((o) => (o === col ? null : o))}
             onDrop={() => drop(col)}
-            className={`flex w-72 shrink-0 flex-col rounded-lg bg-[#eceff4] transition-shadow ${
+            className={`flex w-[85vw] max-w-72 shrink-0 snap-start flex-col rounded-lg sm:w-72 bg-[#eceff4] transition-shadow ${
               over === col ? "ring-2 ring-brand" : ""
             }`}
           >

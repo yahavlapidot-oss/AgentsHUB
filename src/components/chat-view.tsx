@@ -42,7 +42,7 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-[calc(100dvh-6.75rem-env(safe-area-inset-bottom))] flex-col sm:h-screen">
       <PageHeader title="Agent chat" subtitle="What your agents say to each other, and to you. Jump in any time." />
       <div className="flex min-h-0 flex-1">
         <aside className="hidden w-64 shrink-0 overflow-y-auto border-r border-line bg-white p-3 md:block">
@@ -66,7 +66,24 @@ export function ChatView() {
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {/* Phones and tablets: the channel list above becomes one picker. */}
+          <div className="border-b border-line bg-white px-4 py-2 md:hidden">
+            <label className="sr-only" htmlFor="chat-filter">Show</label>
+            <select
+              id="chat-filter"
+              className="input"
+              value={filter.kind === "all" ? "all" : `${filter.kind}:${filter.id}`}
+              onChange={(e) => {
+                const [kind, id] = e.target.value.split(":");
+                setFilter(kind === "agent" || kind === "task" ? { kind, id } : { kind: "all" });
+              }}
+            >
+              <option value="all"># everyone ({messages.length})</option>
+              {agents.map((a) => <option key={a.id} value={`agent:${a.id}`}>{a.name}</option>)}
+              {taskIds.map((id) => <option key={id} value={`task:${id}`}>▦ {taskTitle(id) ?? id}</option>)}
+            </select>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
             {!shown.length && (
               <p className="py-16 text-center text-sm text-ink-soft">
                 No messages here yet. Agents post with <code className="font-mono">POST /api/v1/messages</code>.
@@ -99,7 +116,7 @@ export function ChatView() {
             </ol>
             <div ref={endRef} />
           </div>
-          <form onSubmit={send} className="flex flex-wrap items-end gap-2 border-t border-line bg-white px-6 py-3">
+          <form onSubmit={send} className="flex flex-wrap items-end gap-2 border-t border-line bg-white px-4 sm:px-6 py-3">
             <div>
               <label className="label" htmlFor="chat-to">To</label>
               <select id="chat-to" className="input w-44" value={to} onChange={(e) => setTo(e.target.value)}>

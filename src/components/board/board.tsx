@@ -41,7 +41,7 @@ export function Board() {
       />
       <Summary />
 
-      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-6 py-2">
+      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-4 sm:px-6 py-2">
         <div role="tablist" className="flex gap-1">
           {(["table", "kanban"] as const).map((v) => (
             <button
@@ -58,10 +58,10 @@ export function Board() {
             </button>
           ))}
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
           <input
             id="board-search"
-            className="input w-48"
+            className="input w-full sm:w-48"
             placeholder="Search tasks"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -89,7 +89,7 @@ export function Board() {
         </div>
       </div>
 
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         {view === "table" ? (
           <TableView tasks={visible} onOpen={setOpenTaskId} onCreate={() => setCreating(true)} />
         ) : (
@@ -135,7 +135,7 @@ function Summary() {
   return (
     <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-5">
       {stats.map((s, i) => (
-        <div key={s.label} className={`bg-white px-6 py-3 ${i === stats.length - 1 ? "col-span-2 sm:col-span-1" : ""}`}>
+        <div key={s.label} className={`bg-white px-4 py-2 sm:px-6 sm:py-3 ${i === stats.length - 1 ? "hidden sm:block" : ""}`}>
           <p className="text-xs text-ink-faint">{s.label}</p>
           <p
             className={`mt-0.5 text-xl font-semibold tabular-nums ${

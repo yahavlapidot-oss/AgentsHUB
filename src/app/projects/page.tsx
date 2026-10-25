@@ -17,7 +17,7 @@ export default async function ProjectsPage() {
         title="Projects"
         subtitle="Group tasks into a project and its agents share one workspace: the same files, goal and decisions. The next agent picks up where the last one stopped."
       />
-      <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section className="flex min-w-0 flex-col gap-3">
           {projects.length ? (
             projects.map((p) => {

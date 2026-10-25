@@ -25,7 +25,7 @@ test("create a task on the board", async ({ page }) => {
   await page.getByRole("button", { name: "+ New task" }).first().click();
   await page.getByLabel("Title").fill("E2E: add a health page");
   await page.getByRole("button", { name: "Create task" }).click();
-  await expect(page.getByText("E2E: add a health page").first()).toBeVisible();
+  await expect(page.getByText("E2E: add a health page").filter({ visible: true }).first()).toBeVisible();
 });
 
 test("approve an agent's request", async ({ page }) => {

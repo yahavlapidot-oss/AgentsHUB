@@ -30,7 +30,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
         title="Audit log"
         subtitle="Everything agents did and everything you decided, newest first: tool calls, files, approvals asked, decided and used, and your commands. Times are UTC."
       />
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <nav className="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Filter by agent">
           <Link href="/audit" className={`rounded-full px-3 py-1 ${!agent ? "bg-ink text-white" : "bg-white ring-1 ring-line"}`}>Everyone</Link>
           {agents.map((a) => (

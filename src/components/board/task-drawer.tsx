@@ -45,11 +45,11 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onMouseDown={onClose}>
       <aside
-        className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl"
+        className="flex h-full w-full max-w-xl flex-col bg-white pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
         aria-label={`Task: ${task.title}`}
       >
-        <div className="border-b border-line px-6 pb-3 pt-5">
+        <div className="border-b border-line px-4 sm:px-6 pb-3 pt-5">
           <div className="flex items-start justify-between gap-3">
             <h2 className="text-xl font-semibold leading-snug">{task.title}</h2>
             <button type="button" className="btn-ghost -mr-2 px-2" onClick={onClose} aria-label="Close">✕</button>
@@ -93,7 +93,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-canvas px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-canvas px-4 sm:px-6 py-4">
           {tab === "updates" && <Updates taskId={taskId} ownerId={task.ownerAgentId} messages={detail.messages} onSent={load} />}
           {tab === "activity" && <Activity events={detail.events} />}
           {tab === "files" && <ArtifactsList artifacts={detail.artifacts} onChange={load} />}

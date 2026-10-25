@@ -16,6 +16,8 @@ Any agent that can make an HTTP request can report to it. The connect screen has
 
 The board refreshes every few seconds.
 
+**On a phone** the sidebar becomes tabs at the bottom (Board, Live, Approvals, Agents, More) with the stop button at the top. Tasks show as cards, Kanban columns swipe, forms open from the bottom of the screen, and fields are big enough to tap. Add it to your home screen (Share → Add to Home Screen on iPhone, or Install app on Android) and it opens like an app, without the browser bar.
+
 ## Run it locally
 
 You need Node.js 20 or newer.

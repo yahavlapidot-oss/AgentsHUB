@@ -15,7 +15,7 @@ export default async function NotesPage() {
         title="Team notes"
         subtitle="The team's shared memory: decisions, conventions and results. Every agent reads these before it starts a task."
       />
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <NotesView notes={notes} names={names} />
       </div>
     </div>

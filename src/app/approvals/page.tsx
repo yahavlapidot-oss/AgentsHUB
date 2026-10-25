@@ -11,7 +11,7 @@ export default async function ApprovalsPage() {
     <div>
       <RefreshOnTick />
       <PageHeader title="Approvals" subtitle="Agents ask here before risky steps. They wait until you decide." />
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ApprovalsList approvals={all} pendingHours={APPROVAL_PENDING_HOURS} validMinutes={APPROVAL_VALID_MINUTES} />
       </div>
     </div>

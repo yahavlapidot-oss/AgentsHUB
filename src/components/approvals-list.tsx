@@ -65,9 +65,9 @@ export function ApprovalsList({ approvals, pendingHours, validMinutes }: { appro
                       {agent?.name ?? "Agent"} · {a.risk} risk{task ? ` · ${task.title}` : ""} · {timeAgo(a.createdAt)} · expires {timeUntil(a.createdAt + pendingHours * 3_600_000)}
                     </p>
                   </div>
-                  <div className="flex gap-2">
-                    <button type="button" className="btn-ghost border border-line" onClick={() => decide(a.id, "denied")}>Deny</button>
-                    <button type="button" className="btn-primary" onClick={() => decide(a.id, "approved")}>Approve</button>
+                  <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                    <button type="button" className="btn-ghost justify-center border border-line" onClick={() => decide(a.id, "denied")}>Deny</button>
+                    <button type="button" className="btn-primary justify-center" onClick={() => decide(a.id, "approved")}>Approve</button>
                   </div>
                 </li>
               );

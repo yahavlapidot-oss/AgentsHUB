@@ -30,7 +30,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   return (
     <div>
       <RefreshOnTick />
-      <header className="border-b border-line bg-white px-6 py-5">
+      <header className="border-b border-line bg-white px-4 sm:px-6 py-5">
         <Link href="/agents" className="text-sm text-ink-soft hover:text-ink">← Agents</Link>
         <div className="mt-3 flex flex-wrap items-center gap-4">
           <AgentAvatar agent={agent} size={52} />
@@ -68,14 +68,14 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           ["Runs", String(runs.length)],
           ["Open tasks", String(mine.filter((t) => t.column !== "done").length)],
         ].map(([k, v]) => (
-          <div key={k} className="bg-white px-6 py-3">
+          <div key={k} className="bg-white px-4 sm:px-6 py-3">
             <p className="text-xs text-ink-faint">{k}</p>
             <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{v}</p>
           </div>
         ))}
       </div>
 
-      <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex min-w-0 flex-col gap-6">
           <section className="card">
             <h2 className="border-b border-line px-4 py-3 font-semibold">Tasks</h2>
@@ -107,9 +107,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
                 <thead className="text-left text-xs text-ink-faint">
                   <tr>
                     <th className="px-4 py-2 font-medium">Started</th>
-                    <th className="px-4 py-2 font-medium">Model</th>
-                    <th className="px-4 py-2 text-right font-medium">In</th>
-                    <th className="px-4 py-2 text-right font-medium">Out</th>
+                    <th className="hidden px-4 py-2 font-medium sm:table-cell">Model</th>
+                    <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">In</th>
+                    <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Out</th>
                     <th className="px-4 py-2 text-right font-medium">Cost</th>
                     <th className="px-4 py-2 font-medium">Outcome</th>
                   </tr>
@@ -118,9 +118,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
                   {runs.map((r) => (
                     <tr key={r.id} className="border-t border-line">
                       <td className="px-4 py-2 font-sans">{timeAgo(r.startedAt)}</td>
-                      <td className="px-4 py-2">{r.model}</td>
-                      <td className="px-4 py-2 text-right">{compact(r.tokensIn)}</td>
-                      <td className="px-4 py-2 text-right">{compact(r.tokensOut)}</td>
+                      <td className="hidden px-4 py-2 sm:table-cell">{r.model}</td>
+                      <td className="hidden px-4 py-2 text-right sm:table-cell">{compact(r.tokensIn)}</td>
+                      <td className="hidden px-4 py-2 text-right sm:table-cell">{compact(r.tokensOut)}</td>
                       <td className="px-4 py-2 text-right">{usd(r.costUsd)}</td>
                       <td className="px-4 py-2 font-sans">{r.outcome ?? (r.endedAt ? "ended" : "running")}</td>
                     </tr>
@@ -132,10 +132,13 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
             )}
           </section>
         </div>
-        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role} autonomy={agent.autonomy}
-          commands={commands}
-          sandbox={agent.kind === "hosted" ? { enabled: agent.sandboxEnabled, ready: await sandboxesAvailable() } : null}
-        />
+        {/* On a phone the controls come first: pausing or redirecting is what you open it for. */}
+        <div className="order-first lg:order-none">
+          <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role} autonomy={agent.autonomy}
+            commands={commands}
+            sandbox={agent.kind === "hosted" ? { enabled: agent.sandboxEnabled, ready: await sandboxesAvailable() } : null}
+          />
+        </div>
       </div>
     </div>
   );
