@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const token = () => (JSON.parse(readFileSync("e2e/.state.json", "utf8")) as { token: string }).token;
 
-for (const path of ["/", "/live", "/approvals", "/artifacts", "/usage", "/agents", "/projects", "/chat", "/notes", "/audit", "/status"]) {
+for (const path of ["/", "/live", "/approvals", "/artifacts", "/usage", "/agents", "/projects", "/chat", "/chat/team", "/notes", "/audit", "/status"]) {
   test(`${path} fits a phone screen`, async ({ page }) => {
     await page.goto(path);
     await page.waitForLoadState("networkidle");
@@ -60,9 +60,26 @@ test("approve from a phone", async ({ page, request }) => {
 });
 
 test("chat box stays above the tabs", async ({ page }) => {
-  await page.goto("/chat");
+  await page.goto("/chat/team");
   await expectReachable(page, "Send");
   await page.getByLabel("Show").selectOption({ label: "Coder" });
+});
+
+test("hand a task to a project's work manager from the chat tab", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: /Chats/ }).click();
+  await page.getByRole("link", { name: /Docs site/ }).click();
+  await page.getByRole("button", { name: /Writer/ }).click();
+  await page.getByRole("radio", { name: "Task" }).click();
+  await page.getByLabel("Task").fill("Add a FAQ page");
+  await expectReachable(page, "Add task");
+  await page.getByRole("button", { name: "Add task" }).click();
+  // The task shows as a live card in the chat and on the project's board.
+  await expect(page.locator("li", { hasText: "Add a FAQ page" }).getByText("Ready")).toBeVisible();
+  await page.goto("/?project=" + new URL(page.url()).pathname.split("/").pop());
+  await expect(page.getByRole("heading", { name: "Docs site" })).toBeVisible();
+  await expect(page.getByText("Add a FAQ page").filter({ visible: true }).first()).toBeVisible();
+  await expect(page.getByText("Add invoice PDF export").filter({ visible: true })).toHaveCount(0);
 });
 
 test("the app can be added to the home screen", async ({ browser, baseURL }) => {

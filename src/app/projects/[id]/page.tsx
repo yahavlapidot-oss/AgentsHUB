@@ -5,7 +5,7 @@ import { NewProjectTask } from "@/components/projects/new-project-task";
 import { ProjectForm } from "@/components/projects/project-form";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { getSpendByProject } from "@/lib/budgets";
-import { getAgents, getArtifacts, getProject, getTasks } from "@/lib/data";
+import { getAgents, getArtifacts, getProject, getTasks, projectLead } from "@/lib/data";
 import { COLUMN_META, usd, PROJECT_STATUS_LABELS as STATUS_LABELS } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +20,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const workspace = files.filter((f) => !latest.has(f.path) && latest.add(f.path));
   const spent = costs.get(id) ?? { total: 0, models: 0, computers: 0 };
   const over = project.budgetUsd != null && spent.total >= project.budgetUsd;
+  const lead = projectLead(project, agents);
   const name = (agentId: string | null) => agents.find((a) => a.id === agentId)?.name ?? "Unassigned";
 
   return (
@@ -30,6 +31,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">{project.name}</h1>
           <span className="rounded bg-canvas px-2 py-0.5 text-sm text-ink-soft">{STATUS_LABELS[project.status]}</span>
+          <Link href={`/?project=${id}`} className="btn-ghost border border-line">▦ Board</Link>
+          <Link href={`/chat/${id}`} className="btn-ghost border border-line">✉ Chat{lead ? ` with ${lead.name}` : ""}</Link>
           <NewProjectTask projectId={id} />
         </div>
         {project.goal && <p className="mt-2 max-w-3xl whitespace-pre-wrap text-sm text-ink-soft">{project.goal}</p>}
@@ -57,7 +60,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-w-0 flex-col gap-6">
           <section className="card">
-            <h2 className="border-b border-line px-4 py-3 font-semibold">Tasks</h2>
+            <h2 className="flex items-center border-b border-line px-4 py-3 font-semibold">
+              Tasks
+              <Link href={`/?project=${id}`} className="ml-auto text-sm font-normal text-brand">Open board →</Link>
+            </h2>
             {mine.length ? (
               <ul>
                 {mine.map((t) => (

@@ -1,18 +1,33 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useLive } from "../live";
 import { AgentAvatar, PageHeader } from "../ui";
 import { compact } from "@/lib/format";
+import { isProjectMember, projectLead } from "@/lib/project-lead";
+import type { Task } from "@/lib/schema";
 import { KanbanView } from "./kanban-view";
 import { NewTaskDialog } from "./new-task-dialog";
 import { TableView } from "./table-view";
 import { TaskDrawer } from "./task-drawer";
 
 type View = "table" | "kanban";
+/** Which project's tasks the board shows: one project, tasks in no project, or all. */
+export type ProjectScope = "all" | "none" | (string & {});
 
-export function Board() {
-  const { tasks, agents } = useLive();
+export function inScope(t: Pick<Task, "projectId">, scope: ProjectScope): boolean {
+  return scope === "all" ? true : scope === "none" ? !t.projectId : t.projectId === scope;
+}
+
+export function Board({ initialProject = "all" }: { initialProject?: ProjectScope }) {
+  const { tasks: allTasks, agents: allAgents, projects } = useLive();
+  const [scope, setScopeState] = useState<ProjectScope>(initialProject);
+  const project = projects.find((p) => p.id === scope);
+  const tasks = useMemo(() => allTasks.filter((t) => inScope(t, scope)), [allTasks, scope]);
+  // A project's board shows only the agents who may work on it.
+  const agents = project ? allAgents.filter((a) => isProjectMember(project, a.id)) : allAgents;
+  const lead = project ? projectLead(project, allAgents) : null;
   const [view, setView] = useState<View>("table");
   const [query, setQuery] = useState("");
   const [agentFilter, setAgentFilter] = useState<string | "all" | "none">("all");
@@ -28,18 +43,42 @@ export function Board() {
     });
   }, [tasks, query, agentFilter]);
 
+  // The URL keeps the project, so a link or a reload opens the same board.
+  function setScope(next: ProjectScope) {
+    setScopeState(next);
+    setAgentFilter("all");
+    window.history.replaceState(null, "", next === "all" ? "/" : `/?project=${encodeURIComponent(next)}`);
+  }
+
   return (
     <div>
       <PageHeader
-        title="Main board"
-        subtitle="Everything your agents are working on. Click a task to see its updates and activity."
+        title={project ? project.name : scope === "none" ? "Tasks without a project" : "Main board"}
+        subtitle={
+          project
+            ? project.goal || "This project's tasks. Click a task to see its updates and activity."
+            : "Everything your agents are working on. Click a task to see its updates and activity."
+        }
         actions={
-          <button type="button" className="btn-primary" onClick={() => setCreating(true)}>
-            + New task
-          </button>
+          <>
+            <label className="sr-only" htmlFor="board-project">Project</label>
+            <select id="board-project" className="input w-auto max-w-[11rem]" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="all">All projects</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              <option value="none">No project</option>
+            </select>
+            {project && (
+              <Link href={`/chat/${project.id}`} className="btn-ghost border border-line" title={lead ? `Chat with ${lead.name}` : "Pick a work manager"}>
+                ✉ Chat
+              </Link>
+            )}
+            <button type="button" className="btn-primary" onClick={() => setCreating(true)}>
+              + New task
+            </button>
+          </>
         }
       />
-      <Summary />
+      <Summary tasks={tasks} agents={agents} scoped={scope !== "all"} />
 
       <div className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-4 sm:px-6 py-2">
         <div role="tablist" className="flex gap-1">
@@ -98,7 +137,7 @@ export function Board() {
       </div>
 
       {openTaskId && <TaskDrawer taskId={openTaskId} onClose={() => setOpenTaskId(null)} />}
-      {creating && <NewTaskDialog onClose={() => setCreating(false)} />}
+      {creating && <NewTaskDialog projectId={project?.id} onClose={() => setCreating(false)} />}
     </div>
   );
 }
@@ -118,8 +157,10 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
   );
 }
 
-function Summary() {
-  const { tasks, agents, approvals } = useLive();
+function Summary({ tasks, agents, scoped }: { tasks: Task[]; agents: ReturnType<typeof useLive>["agents"]; scoped: boolean }) {
+  const { approvals: allApprovals } = useLive();
+  const ids = new Set(tasks.map((t) => t.id));
+  const approvals = scoped ? allApprovals.filter((a) => a.taskId && ids.has(a.taskId)) : allApprovals;
   const dayAgo = Date.now() - 24 * 3600_000;
   const stats = [
     { label: "Agents working", value: `${agents.filter((a) => a.status === "active").length} / ${agents.length}` },

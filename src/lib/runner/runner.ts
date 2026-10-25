@@ -35,6 +35,7 @@ import {
   getLastHandoff,
   getMessages,
   getNotes,
+  getProject,
   getProjects,
   getTask,
   getTasks,
@@ -42,6 +43,7 @@ import {
   heartbeat,
   isProjectMember,
   markInboxRead,
+  projectLead,
   startRun,
   takePendingCommands,
   updateTask,
@@ -99,11 +101,18 @@ You are between tasks, and you were woken up because someone wrote to you. Read 
 - Save decisions in the team notes with write_note, and what you learn about how your user wants things done with remember.
 - Don't reply just to acknowledge or say thanks. When you're done, reply without calling a tool.`;
 
-function systemFor(agent: Agent, base: string, computer?: boolean): string {
+const PROJECT_CHAT = (p: Project) => `You are the work manager of the project "${p.name}" (${p.id}). Your user talks to you in the project chat to hand out work and ask how it's going.
+- Your replies with send_message go to the project chat; leave toAgentId empty when you answer the user.
+- When the user asks for work, turn it into tasks right away with create_task in this project: give each an owner from the project's agents whose skills fit (or yourself when you should plan or split it), a clear title, and what "done" means. Then tell the user in one or two lines who is doing what.
+- When the user asks how things are going, answer from the project's tasks below: what's done, what's in progress and by whom, what's blocked or waiting on them. Be short and specific.
+- If something is unclear, ask one short question instead of guessing.`;
+
+function systemFor(agent: Agent, base: string, opts: { computer?: boolean; lead?: boolean; chat?: Project | null } = {}): string {
   return [
     base,
-    computer === undefined ? null : computer ? COMPUTER : NO_COMPUTER,
-    agent.role === "lead" && LEAD,
+    opts.computer === undefined ? null : opts.computer ? COMPUTER : NO_COMPUTER,
+    (agent.role === "lead" || opts.lead) && LEAD,
+    opts.chat && PROJECT_CHAT(opts.chat),
     agent.instructions && `Your own instructions from the user:\n${agent.instructions}`,
   ]
     .filter(Boolean)
@@ -172,7 +181,8 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
 /**
  * Own unfinished work first, then work assigned to it, then any ready task nobody owns.
  * A task waits while it has open subtasks or unfinished dependencies. While a lead is
- * online, new top-level tasks nobody owns are left for the lead to plan.
+ * online, new top-level tasks nobody owns are left for the lead to plan: the
+ * project's work manager for a project task, otherwise a team lead.
  */
 export async function pickTask(agent: Pick<Agent, "id" | "role">): Promise<Task | null> {
   const [all, agents, projects] = await Promise.all([getTasks(), getAgents(), getProjects()]);
@@ -186,8 +196,15 @@ export async function pickTask(agent: Pick<Agent, "id" | "role">): Promise<Task 
   });
   const unblocked = (t: Task) => t.dependsOn.every((d) => done.has(d)) && !openChildren.has(t.id);
   const byPriority = (a: Task, b: Task) => rank(b.priority) - rank(a.priority) || a.createdAt - b.createdAt;
-  const leadOnline = agents.some((a) => a.id !== agent.id && a.role === "lead" && a.status !== "offline" && a.status !== "paused");
-  const leftForLead = (t: Task) => agent.role !== "lead" && leadOnline && !t.parentTaskId;
+  const online = (a: PublicAgent | null | undefined) => Boolean(a && a.id !== agent.id && a.status !== "offline" && a.status !== "paused");
+  const leadOnline = agents.some((a) => a.role === "lead" && online(a));
+  const leftForLead = (t: Task) => {
+    if (t.parentTaskId) return false;
+    const p = t.projectId ? projectOf.get(t.projectId) : null;
+    const lead = p?.leadAgentId ? projectLead(p, agents) : null;
+    if (lead) return online(lead);
+    return agent.role !== "lead" && leadOnline;
+  };
   const candidates = [
     tasks.filter((t) => t.ownerAgentId === agent.id && t.column === "in_progress"),
     tasks.filter((t) => t.ownerAgentId === agent.id && t.column === "ready"),
@@ -242,14 +259,16 @@ async function loop(
     return "failed";
   }
   const tools = toolsForAgent(agent, { sandbox: Boolean(sandbox) });
+  const project = task.projectId ? await getProject(task.projectId) : null;
+  const leadsProject = Boolean(project && projectLead(project, await getAgents())?.id === agent.id);
   const chat = createChat({
     provider: agent.provider,
     model: agent.model,
-    system: systemFor(agent, SYSTEM, Boolean(sandbox)),
+    system: systemFor(agent, SYSTEM, { computer: Boolean(sandbox), lead: leadsProject }),
     tools,
   });
 
-  const ctx: ToolContext = { agent, taskId: task.id, runId, sandbox, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const ctx: ToolContext = { agent, taskId: task.id, runId, projectId: task.projectId, sandbox, waitForApproval: (gate) => waitForDecision(agent, gate) };
   const executor = new ToolExecutor(tools, ctx, { taskId: task.id, runId });
 
   // Messages that came in while the agent was idle arrive with the first turn.
@@ -524,7 +543,8 @@ function describeMessage(m: Message, names: Map<string, string>, currentTaskId?:
   const who = m.fromAgentId ? `${names.get(m.fromAgentId) ?? "an agent"} (${m.fromAgentId})` : "your user";
   const to = m.toAgentId ? "to you" : "to everyone";
   const about = m.taskId && m.taskId !== currentTaskId ? ` about task ${m.taskId}` : "";
-  return `message from ${who}, ${to}${about}: ${m.text}`;
+  const where = m.projectId ? ` in the chat of project ${m.projectId}` : "";
+  return `message from ${who}, ${to}${where}${about}: ${m.text}`;
 }
 
 /** A short run with no task: the agent reads what it was sent and answers. */
@@ -547,12 +567,21 @@ export async function runInbox(agent: Agent, waiting: Message[]): Promise<void> 
 
 async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promise<"success" | "failed" | "cancelled"> {
   const tools = toolsForAgent(agent, { sandbox: false });
-  const chat = createChat({ provider: agent.provider, model: agent.model, system: systemFor(agent, INBOX), tools });
-  const ctx: ToolContext = { agent, runId, waitForApproval: (gate) => waitForDecision(agent, gate) };
-  const executor = new ToolExecutor(tools, ctx, { runId });
   const [agents, tasks, names] = await Promise.all([getAgents(), getTasks(), agentNames()]);
+  // Woken from a project chat: answer there, in the project's context.
+  const chatProjectId = [...waiting].reverse().find((m) => m.projectId)?.projectId;
+  const project = chatProjectId ? await getProject(chatProjectId) : null;
+  const leadsProject = Boolean(project && projectLead(project, agents)?.id === agent.id);
+  const chat = createChat({
+    provider: agent.provider,
+    model: agent.model,
+    system: systemFor(agent, INBOX, { lead: leadsProject, chat: leadsProject ? project : null }),
+    tools,
+  });
+  const ctx: ToolContext = { agent, runId, projectId: project?.id ?? null, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const executor = new ToolExecutor(tools, ctx, { runId });
   const mine = tasks.filter((t) => t.ownerAgentId === agent.id && t.column !== "done");
-  let input: { text?: string; toolOutputs?: ToolOutput[] } = { text: await inboxBrief(agent, waiting, { agents, mine, names }) };
+  let input: { text?: string; toolOutputs?: ToolOutput[] } = { text: await inboxBrief(agent, waiting, { agents, mine, names, project, tasks }) };
   let lastInboxCheck = Date.now();
 
   for (let turn = 0; turn < INBOX_MAX_TURNS; turn++) {
@@ -586,10 +615,16 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
 export async function inboxBrief(
   agent: Agent,
   waiting: Message[],
-  ctx: { agents: PublicAgent[]; mine: Task[]; names: Map<string, string> },
+  ctx: { agents: PublicAgent[]; mine: Task[]; names: Map<string, string>; project?: Project | null; tasks?: Task[] },
   budget = BRIEF_TOKENS,
 ): Promise<string> {
-  const [earlier, memories, notes] = await Promise.all([getMessages({ agentId: agent.id, limit: 30 }), getAgentMemories(agent.id), getNotes()]);
+  const project = ctx.project ?? null;
+  const [earlier, memories, notes] = await Promise.all([
+    // In a project chat, the conversation before is that chat's.
+    getMessages(project ? { projectId: project.id, limit: 30 } : { agentId: agent.id, limit: 30 }),
+    getAgentMemories(agent.id),
+    getNotes(),
+  ]);
   const newIds = new Set(waiting.map((m) => m.id));
   const before = earlier.filter((m) => !newIds.has(m.id)).slice(-12);
   const notesText = notes.map((n) => `### ${n.title}\n${n.text}`).join("\n\n");
@@ -602,6 +637,7 @@ export async function inboxBrief(
         moreWith: "search_memory",
         text: before.length && `Your conversation before these messages (oldest first):\n${before.map((m) => `- ${describeSent(m, agent, ctx.names)}`).join("\n")}`,
       },
+      { name: "the project", cuttable: true, moreWith: "list_projects", text: project && projectChatLine(project, ctx.tasks ?? [], ctx.agents) },
       {
         name: "your open tasks",
         cuttable: true,
@@ -621,10 +657,27 @@ export async function inboxBrief(
   ).text;
 }
 
+/** What a work manager needs to answer in its project chat: the goal, who's on it, and where every task stands. */
+function projectChatLine(p: Project, tasks: Task[], agents: PublicAgent[]): string {
+  const name = (id: string | null) => agents.find((a) => a.id === id)?.name ?? "unassigned";
+  const team = agents.filter((a) => isProjectMember(p, a.id)).map((a) => `${a.name} (${a.id}, skills: ${a.skills.join(", ") || "general"}, ${a.status})`);
+  const mine = tasks.filter((t) => t.projectId === p.id).sort((a, b) => b.updatedAt - a.updatedAt);
+  const rows = mine.slice(0, 60).map((t) => `- ${t.title} (${t.id}) [${t.column}, ${t.progressPct}%, ${name(t.ownerAgentId)}]${t.parentTaskId ? ` part of ${t.parentTaskId}` : ""}`);
+  return [
+    projectLine(p).replace("This task is part of", "This chat is about"),
+    `Agents who may work on it: ${team.join("; ") || "none"}`,
+    mine.length ? `Its tasks, latest first:\n${rows.join("\n")}${mine.length > 60 ? `\n…and ${mine.length - 60} more` : ""}` : "It has no tasks yet.",
+  ].join("\n");
+}
+
 function describeSent(m: Message, agent: Agent, names: Map<string, string>): string {
   if (m.fromAgentId === agent.id) {
     const to = m.toAgentId ? names.get(m.toAgentId) ?? m.toAgentId : "everyone";
     return `you to ${to}: ${m.text.slice(0, 1_000)}`;
+  }
+  if (m.toAgentId && m.toAgentId !== agent.id) {
+    const who = m.fromAgentId ? names.get(m.fromAgentId) ?? m.fromAgentId : "your user";
+    return `${who} to ${names.get(m.toAgentId) ?? m.toAgentId}: ${m.text.slice(0, 1_000)}`;
   }
   return `${describeMessage(m, names)}`.slice(0, 1_100);
 }

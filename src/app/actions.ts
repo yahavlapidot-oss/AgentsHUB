@@ -49,6 +49,45 @@ export async function sendMessageAction(input: { text: string; toAgentId?: strin
   await data.postMessage({ fromAgentId: null, toAgentId: input.toAgentId ?? null, taskId: input.taskId ?? null, text });
 }
 
+const LeadMessage = z.object({
+  text: z.string().trim().min(1, "Write something").max(10_000),
+  asTask: z.boolean().default(false),
+  priority: z.enum(PRIORITIES).default("medium"),
+});
+
+/**
+ * Writes to the project's work manager in the project chat. As a task, the first
+ * line becomes the title and the rest the description, and the task goes to the
+ * manager to plan and hand out.
+ */
+export async function sendToLeadAction(projectId: string, input: z.input<typeof LeadMessage>) {
+  const { text, asTask, priority } = LeadMessage.parse(input);
+  const [project, agents] = await Promise.all([data.getProject(projectId), data.getAgents()]);
+  if (!project) throw new Error("This project no longer exists");
+  const lead = data.projectLead(project, agents);
+  if (!lead) throw new Error("Pick a work manager for this project first");
+  let taskId: string | null = null;
+  if (asTask) {
+    const [first, ...rest] = text.split("\n");
+    const task = await data.createTask({
+      title: first.trim().slice(0, 300),
+      description: rest.join("\n").trim(),
+      priority,
+      projectId,
+      ownerAgentId: lead.id,
+      column: "ready",
+      createdBy: "user",
+    });
+    taskId = task.id;
+  }
+  await data.postMessage({ fromAgentId: null, toAgentId: lead.id, projectId, taskId, text });
+  return { taskId };
+}
+
+export async function setProjectLeadAction(projectId: string, agentId: string | null) {
+  await data.updateProject(projectId, { leadAgentId: agentId });
+}
+
 const NewAgent = z.object({
   name: z.string().trim().min(1, "Give the agent a name").max(80),
   provider: z.enum(PROVIDERS),
@@ -149,6 +188,7 @@ const ProjectInput = z.object({
   goal: z.string().trim().max(5_000).default(""),
   context: z.string().trim().max(20_000).default(""),
   memberAgentIds: z.array(z.string()).max(100).default([]),
+  leadAgentId: z.string().nullable().optional(),
   status: z.enum(PROJECT_STATUSES).default("active"),
   budgetUsd: z.number().positive().max(1_000_000).nullable().optional(),
 });

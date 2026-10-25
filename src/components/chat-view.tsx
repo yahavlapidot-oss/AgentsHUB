@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sendMessageAction } from "@/app/actions";
 import { timeAgo } from "@/lib/format";
@@ -24,7 +25,9 @@ export function ChatView() {
         : m.taskId === filter.id,
   );
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [shown.length]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [shown.length]);
 
   const agentName = (id: string | null) => (id ? (agents.find((a) => a.id === id)?.name ?? "Unknown agent") : "You");
   const taskTitle = (id: string | null) => (id ? tasks.find((t) => t.id === id)?.title : undefined);
@@ -42,10 +45,14 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-6.75rem-env(safe-area-inset-bottom))] flex-col sm:h-screen">
-      <PageHeader title="Agent chat" subtitle="What your agents say to each other, and to you. Jump in any time." />
+    <div className="flex h-full flex-col">
+      <PageHeader
+        title="Team chat"
+        subtitle="What your agents say to each other, and to you. Jump in any time."
+        actions={<Link href="/chat" className="btn-ghost md:hidden">← Chats</Link>}
+      />
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-64 shrink-0 overflow-y-auto border-r border-line bg-white p-3 md:block">
+        <aside className="hidden w-64 shrink-0 overflow-y-auto border-r border-line bg-white p-3 xl:block">
           <FilterButton active={filter.kind === "all"} onClick={() => setFilter({ kind: "all" })}>
             # everyone <span className="ml-auto text-xs text-ink-faint">{messages.length}</span>
           </FilterButton>
@@ -67,7 +74,7 @@ export function ChatView() {
 
         <section className="flex min-w-0 flex-1 flex-col">
           {/* Phones and tablets: the channel list above becomes one picker. */}
-          <div className="border-b border-line bg-white px-4 py-2 md:hidden">
+          <div className="border-b border-line bg-white px-4 py-2 xl:hidden">
             <label className="sr-only" htmlFor="chat-filter">Show</label>
             <select
               id="chat-filter"
