@@ -9,4 +9,10 @@ export async function register(): Promise<void> {
     const { startRunner } = await import("./lib/runner/runner");
     startRunner();
   }
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { checkBlobStore } = await import("./lib/storage");
+    void checkBlobStore()
+      .then((r) => r === "ok" && console.log("[storage] file bucket works"))
+      .catch((e) => console.error("[storage] file bucket check failed; new files fall back to the database", e));
+  }
 }

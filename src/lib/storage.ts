@@ -19,13 +19,14 @@ class S3Store implements BlobStore {
     private bucket: string,
     private endpoint: string,
     opts: { accessKeyId: string; secretAccessKey: string; region: string },
+    /** "virtual" puts the bucket in the host name (Railway's new buckets); "path" puts it in the path. */
+    private style: "path" | "virtual" = "path",
   ) {
     this.client = new AwsClient({ ...opts, service: "s3" });
   }
 
   private url(key: string): string {
-    const base = this.endpoint.replace(/\/+$/, "");
-    return `${base}/${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`;
+    return objectUrl(this.endpoint, this.bucket, key, this.style);
   }
 
   async put(key: string, bytes: Buffer, contentType: string): Promise<void> {
@@ -44,6 +45,13 @@ class S3Store implements BlobStore {
   }
 }
 
+export function objectUrl(endpoint: string, bucket: string, key: string, style: "path" | "virtual"): string {
+  const path = key.split("/").map(encodeURIComponent).join("/");
+  const base = new URL(endpoint);
+  if (style === "virtual") return `${base.protocol}//${bucket}.${base.host}/${path}`;
+  return `${base.origin}${base.pathname.replace(/\/+$/, "")}/${bucket}/${path}`;
+}
+
 /** The bucket, when it's configured; null means files stay in the database. */
 export function getBlobStore(): BlobStore | null {
   const e = process.env;
@@ -52,5 +60,15 @@ export function getBlobStore(): BlobStore | null {
     accessKeyId: e.ARTIFACT_S3_ACCESS_KEY_ID,
     secretAccessKey: e.ARTIFACT_S3_SECRET_ACCESS_KEY,
     region: e.ARTIFACT_S3_REGION || "auto",
-  });
+  }, e.ARTIFACT_S3_URL_STYLE === "virtual" ? "virtual" : "path");
+}
+
+/** Writes and reads back a small object, so a wrong bucket setting shows up in the logs at startup. */
+export async function checkBlobStore(): Promise<"off" | "ok"> {
+  const store = getBlobStore();
+  if (!store) return "off";
+  const stamp = Buffer.from(new Date().toISOString());
+  await store.put("health/check.txt", stamp, "text/plain");
+  if (!(await store.get("health/check.txt")).equals(stamp)) throw new Error("read back different bytes");
+  return "ok";
 }
