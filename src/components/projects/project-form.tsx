@@ -14,6 +14,7 @@ export function ProjectForm({ project, agents, onDone }: { project?: Project; ag
   const [goal, setGoal] = useState(project?.goal ?? "");
   const [context, setContext] = useState(project?.context ?? "");
   const [members, setMembers] = useState<string[]>(project?.memberAgentIds ?? []);
+  const [lead, setLead] = useState(project?.leadAgentId ?? "");
   const [status, setStatus] = useState<Project["status"]>(project?.status ?? "active");
   const [budget, setBudget] = useState(project?.budgetUsd != null ? String(project.budgetUsd) : "");
   const [saving, setSaving] = useState(false);
@@ -25,7 +26,7 @@ export function ProjectForm({ project, agents, onDone }: { project?: Project; ag
     const budgetUsd = budget.trim() ? Number(budget) : null;
     if (budgetUsd != null && !(budgetUsd > 0)) return setErr("The budget must be a positive amount, or empty for none.");
     setSaving(true);
-    const input = { name, goal, context, memberAgentIds: members, status, budgetUsd };
+    const input = { name, goal, context, memberAgentIds: members, leadAgentId: lead || null, status, budgetUsd };
     try {
       if (project) {
         await updateProjectAction(project.id, input);
@@ -82,6 +83,14 @@ export function ProjectForm({ project, agents, onDone }: { project?: Project; ag
           {!agents.length && <span className="text-sm text-ink-soft">No agents yet.</span>}
         </div>
       </fieldset>
+      <div>
+        <label className="label" htmlFor="pf-lead">Work manager</label>
+        <select id="pf-lead" className="input" value={lead} onChange={(e) => setLead(e.target.value)}>
+          <option value="">{agents.some((a) => a.role === "lead") ? "The team lead" : "None"}</option>
+          {agents.filter((a) => !members.length || members.includes(a.id) || a.id === lead).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+        <p className="mt-1 text-xs text-ink-faint">You chat with it in the project chat. It plans new tasks and hands them to the other agents.</p>
+      </div>
       <div>
         <label className="label" htmlFor="pf-budget">Budget (USD)</label>
         <input

@@ -7,7 +7,7 @@ import { EmergencyStopButton } from "./emergency-stop";
 import { LinkPending, isActive, useNavItems, type NavItem } from "./sidebar";
 
 /** The pages that get their own tab on a phone; the rest are under More. */
-const TABS = ["/", "/live", "/approvals", "/agents"];
+const TABS = ["/", "/live", "/chat", "/approvals"];
 
 /** Phones: a top bar with the page name and the stop button, and tabs at the bottom. */
 export function MobileNav() {
@@ -75,7 +75,7 @@ export function MobileNav() {
 }
 
 function Tab({ item, active }: { item: NavItem; active: boolean }) {
-  const short = { "/": "Board", "/live": "Live", "/approvals": "Approvals", "/agents": "Agents" }[item.href] ?? item.label;
+  const short = { "/": "Board", "/live": "Live", "/chat": "Chats", "/approvals": "Approvals" }[item.href] ?? item.label;
   return (
     <Link
       href={item.href}

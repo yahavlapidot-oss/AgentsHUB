@@ -70,6 +70,8 @@ export const projects = sqliteTable("projects", {
   /** Requirements, constraints and decisions every agent on the project should know. */
   context: text("context").notNull().default(""),
   memberAgentIds: text("member_agent_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+  /** The project's work manager: you chat with it in the project chat, and new project tasks go to it to plan and hand out. */
+  leadAgentId: text("lead_agent_id"),
   /** Spending cap over all the project's tasks (models plus cloud computers). Agents stop at it. */
   budgetUsd: real("budget_usd"),
   status: text("status", { enum: PROJECT_STATUSES }).notNull().default("active"),
@@ -130,7 +132,10 @@ export const events = sqliteTable(
   (t) => [index("events_task_idx").on(t.taskId), index("events_at_idx").on(t.at), index("events_run_idx").on(t.runId)],
 );
 
-/** Agent-to-agent (and user-to-agent) chat. fromAgentId null means the user wrote it. */
+/**
+ * Agent-to-agent (and user-to-agent) chat. fromAgentId null means the user wrote it.
+ * projectId puts the message in that project's chat with its lead.
+ */
 export const messages = sqliteTable(
   "messages",
   {
@@ -138,10 +143,11 @@ export const messages = sqliteTable(
     fromAgentId: text("from_agent_id"),
     toAgentId: text("to_agent_id"),
     taskId: text("task_id"),
+    projectId: text("project_id"),
     text: text("text").notNull(),
     at: integer("at").notNull(),
   },
-  (t) => [index("messages_at_idx").on(t.at)],
+  (t) => [index("messages_at_idx").on(t.at), index("messages_project_idx").on(t.projectId)],
 );
 
 export const commands = sqliteTable("commands", {

@@ -7,6 +7,9 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
+import { isProjectMember } from "./project-lead";
+
+export { isProjectMember, projectLead } from "./project-lead";
 import { boardLink, notifyByEmail } from "./notify";
 import { getBlobStore } from "./storage";
 import { generateAgentToken, hashToken } from "./tokens";
@@ -94,10 +97,11 @@ export async function getEvents(
 }
 
 export async function getMessages(
-  opts: { taskId?: string; agentId?: string; limit?: number } = {},
+  opts: { taskId?: string; agentId?: string; projectId?: string; limit?: number } = {},
 ): Promise<Message[]> {
   const where = and(
     opts.taskId ? eq(messages.taskId, opts.taskId) : undefined,
+    opts.projectId ? eq(messages.projectId, opts.projectId) : undefined,
     opts.agentId
       ? or(eq(messages.fromAgentId, opts.agentId), eq(messages.toAgentId, opts.agentId))
       : undefined,
@@ -240,6 +244,7 @@ export async function setAgentSandbox(agentId: string, enabled: boolean): Promis
 
 export async function deleteAgent(agentId: string): Promise<void> {
   await db.update(tasks).set({ ownerAgentId: null }).where(eq(tasks.ownerAgentId, agentId));
+  await db.update(projects).set({ leadAgentId: null }).where(eq(projects.leadAgentId, agentId));
   await db.delete(agentMemories).where(eq(agentMemories.agentId, agentId));
   await db.delete(agents).where(eq(agents.id, agentId));
 }
@@ -418,6 +423,7 @@ export async function postMessage(input: {
   fromAgentId: string | null;
   toAgentId?: string | null;
   taskId?: string | null;
+  projectId?: string | null;
   text: string;
 }): Promise<Message> {
   const [row] = await db
@@ -427,6 +433,7 @@ export async function postMessage(input: {
       fromAgentId: input.fromAgentId,
       toAgentId: input.toAgentId ?? null,
       taskId: input.taskId ?? null,
+      projectId: input.projectId ?? null,
       text: input.text,
       at: Date.now(),
     })
@@ -958,6 +965,7 @@ export type ProjectInput = {
   goal?: string;
   context?: string;
   memberAgentIds?: string[];
+  leadAgentId?: string | null;
   status?: Project["status"];
   budgetUsd?: number | null;
 };
@@ -971,7 +979,8 @@ export async function createProject(input: ProjectInput): Promise<Project> {
       name: input.name,
       goal: input.goal ?? "",
       context: input.context ?? "",
-      memberAgentIds: [...new Set(input.memberAgentIds ?? [])],
+      memberAgentIds: withLead(input.memberAgentIds ?? [], input.leadAgentId),
+      leadAgentId: input.leadAgentId ?? null,
       status: input.status ?? "active",
       budgetUsd: input.budgetUsd ?? null,
       createdAt: now,
@@ -982,7 +991,9 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 }
 
 export async function updateProject(id: string, patch: Partial<ProjectInput>): Promise<Project | null> {
-  const set = { ...patch, ...(patch.memberAgentIds ? { memberAgentIds: [...new Set(patch.memberAgentIds)] } : {}), updatedAt: Date.now() };
+  let members = patch.memberAgentIds;
+  if (patch.leadAgentId && !members) members = (await getProject(id))?.memberAgentIds;
+  const set = { ...patch, ...(members ? { memberAgentIds: withLead(members, patch.leadAgentId) } : {}), updatedAt: Date.now() };
   const [row] = await db.update(projects).set(set).where(eq(projects.id, id)).returning();
   return row ?? null;
 }
@@ -994,10 +1005,11 @@ export async function deleteProject(id: string): Promise<void> {
   await db.delete(projects).where(eq(projects.id, id));
 }
 
-/** A project without members is open to every agent. */
-export function isProjectMember(project: Pick<Project, "memberAgentIds"> | null, agentId: string): boolean {
-  return !project || !project.memberAgentIds.length || project.memberAgentIds.includes(agentId);
+/** The lead must be allowed to work on the project, so a member list always includes it. */
+function withLead(members: string[], leadAgentId?: string | null): string[] {
+  return [...new Set(members.length && leadAgentId ? [...members, leadAgentId] : members)];
 }
+
 
 async function assertProjectMember(projectId: string | null, agentId: string | null): Promise<void> {
   if (!projectId || !agentId) return;

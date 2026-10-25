@@ -57,6 +57,8 @@ export type ToolContext = {
   /** Hosted runs: the task and run being worked on. */
   taskId?: string | null;
   runId?: string | null;
+  /** The project the agent is working in or chatting about; its messages and new tasks go there. */
+  projectId?: string | null;
   /** Hosted agents with a cloud computer. */
   sandbox?: SandboxSession;
 };
@@ -298,14 +300,18 @@ export const AGENT_TOOLS: AgentTool[] = [
       priority: z.enum(PRIORITIES).optional(),
       projectId: z.string().optional(),
     }),
-    run: async (input, { agent }) => {
+    run: async (input, { agent, projectId, taskId }) => {
       const task = await createTask({
         ...input,
         ownerAgentId: input.ownerAgentId || null,
-        projectId: input.projectId || null,
+        projectId: input.projectId || projectId || null,
         column: "ready",
         createdBy: agent.id,
       });
+      // Tasks made while chatting show up in the project chat, where the user asked for them.
+      if (projectId && !taskId && task.projectId === projectId) {
+        await postMessage({ fromAgentId: agent.id, projectId, taskId: task.id, text: `New task: ${task.title}` });
+      }
       return { task: compactTask(task) };
     },
   }),
@@ -586,12 +592,23 @@ export const AGENT_TOOLS: AgentTool[] = [
       "Write in the agents' chat. Set toAgentId for a direct message, or leave it empty to write to everyone. Set taskId when it's about a task. The user reads this chat.",
     inputSchema: {
       type: "object",
-      properties: { text: str("Message"), toAgentId: str("Recipient agent id (optional)"), taskId: str("Related task id (optional)") },
+      properties: {
+        text: str("Message"),
+        toAgentId: str("Recipient agent id (optional)"),
+        taskId: str("Related task id (optional)"),
+        projectId: str("Project chat to write in (optional; defaults to the project you're working in)"),
+      },
       required: ["text"],
     },
-    args: z.object({ text: z.string().min(1).max(10_000), toAgentId: z.string().optional(), taskId: z.string().optional() }),
-    run: async ({ text, toAgentId, taskId }, { agent }) => ({
-      message: await postMessage({ fromAgentId: agent.id, toAgentId: toAgentId || null, taskId: taskId || null, text }),
+    args: z.object({ text: z.string().min(1).max(10_000), toAgentId: z.string().optional(), taskId: z.string().optional(), projectId: z.string().optional() }),
+    run: async ({ text, toAgentId, taskId, projectId }, ctx) => ({
+      message: await postMessage({
+        fromAgentId: ctx.agent.id,
+        toAgentId: toAgentId || null,
+        taskId: taskId || null,
+        projectId: projectId || ctx.projectId || null,
+        text,
+      }),
     }),
   }),
 

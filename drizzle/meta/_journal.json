@@ -78,6 +78,13 @@
       "when": 1792961625445,
       "tag": "0010_indexes_for_live_and_costs",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1792970371686,
+      "tag": "0011_project_lead_chat",
+      "breakpoints": true
     }
   ]
 }
