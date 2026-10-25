@@ -614,20 +614,28 @@ export const AGENT_TOOLS: AgentTool[] = [
   tool({
     name: "request_approval",
     description:
-      "Ask the user before anything irreversible, anything involving money, or anything that publishes or sends something outside. Describe the exact action. Only do it if the decision is 'allow'.",
+      "Ask the user before anything irreversible, anything involving money, or anything that publishes or sends something outside. Describe the exact action, where it happens, and what will be sent or changed, so the user can decide. Only do it if the decision is 'allow', and do it soon: an approval is valid for a limited time and covers one run of that exact action.",
     inputSchema: {
       type: "object",
       properties: {
         action: str("The exact action, e.g. the command you will run"),
         reason: str("Why it's needed"),
+        service: str("Where it happens, e.g. 'GitHub', 'Gmail', 'Stripe', 'Railway'"),
+        details: str("What will be sent, published, paid or deleted: the email text, the amount, the files, the target"),
         taskId: str("Related task id"),
       },
       required: ["action"],
     },
-    args: z.object({ action: z.string().min(1).max(500), reason: z.string().max(2_000).optional(), taskId: z.string().optional() }),
-    run: async ({ action, reason, taskId }, ctx) => {
+    args: z.object({
+      action: z.string().min(1).max(500),
+      reason: z.string().max(2_000).optional(),
+      service: z.string().max(100).optional(),
+      details: z.string().max(20_000).optional(),
+      taskId: z.string().optional(),
+    }),
+    run: async ({ action, reason, service, details, taskId }, ctx) => {
       // Explicit requests always go to the user, even when the rules wouldn't flag them.
-      const gate = await gateAction(ctx.agent.id, { action, taskId, reason, force: true });
+      const gate = await gateAction(ctx.agent.id, { action, taskId, reason, service, details, force: true });
       const result = ctx.waitForApproval ? await ctx.waitForApproval(gate) : gate;
       return {
         decision: result.decision,

@@ -22,6 +22,7 @@ import {
   projects,
   runs,
   sandboxes,
+  settings,
   tasks,
   type Agent,
   type AgentMemory,
@@ -119,6 +120,7 @@ export async function getRuns(opts: { agentId?: string; limit?: number } = {}): 
 }
 
 export async function getApprovals(opts: { pendingOnly?: boolean } = {}): Promise<Approval[]> {
+  await expireApprovals();
   return db
     .select()
     .from(approvals)
@@ -142,20 +144,23 @@ export type Snapshot = {
   messages: Message[];
   approvals: Approval[];
   projects: Project[];
+  /** Set while the emergency stop is on. */
+  emergencyStop: { at: number; agentIds: string[] } | null;
   generatedAt: number;
 };
 
 /** Everything the live board needs in one round trip. */
 export async function getSnapshot(): Promise<Snapshot> {
-  const [a, t, e, m, ap, p] = await Promise.all([
+  const [a, t, e, m, ap, p, stop] = await Promise.all([
     getAgents(),
     getTasks(),
     getEvents({ limit: 60 }),
     getMessages({ limit: 100 }),
     getApprovals({ pendingOnly: true }),
     getProjects(),
+    getEmergencyStop(),
   ]);
-  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, generatedAt: Date.now() };
+  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, emergencyStop: stop, generatedAt: Date.now() };
 }
 
 export type UsageRow = { key: string; runs: number; tokensIn: number; tokensOut: number; costUsd: number };
@@ -222,6 +227,10 @@ export async function setAgentRole(agentId: string, role: AgentRole): Promise<vo
 
 export async function setAgentDisabledTools(agentId: string, names: string[]): Promise<void> {
   await db.update(agents).set({ disabledTools: names }).where(eq(agents.id, agentId));
+}
+
+export async function setAgentAutonomy(agentId: string, autonomy: Agent["autonomy"]): Promise<void> {
+  await db.update(agents).set({ autonomy }).where(eq(agents.id, agentId));
 }
 
 export async function setAgentSandbox(agentId: string, enabled: boolean): Promise<void> {
@@ -650,7 +659,7 @@ export async function completeCommand(agentId: string, commandId: string): Promi
 /** An agent asks the user before a risky step. Its task moves to "Waiting on you". */
 export async function requestApproval(
   agentId: string,
-  input: { taskId?: string | null; action: string; reason?: string; risk?: Approval["risk"] },
+  input: { taskId?: string | null; action: string; reason?: string; risk?: Approval["risk"]; service?: string; details?: string },
 ): Promise<Approval> {
   const [row] = await db
     .insert(approvals)
@@ -660,6 +669,8 @@ export async function requestApproval(
       taskId: input.taskId ?? null,
       action: input.action,
       reason: input.reason ?? "",
+      service: input.service ?? "",
+      details: (input.details ?? "").slice(0, 20_000),
       risk: input.risk ?? "medium",
       createdAt: Date.now(),
     })
@@ -672,11 +683,13 @@ export async function requestApproval(
     [
       `${agent?.name ?? "An agent"} is waiting for you before: ${row.action}`,
       `Risk: ${row.risk}`,
+      row.service ? `Where: ${row.service}` : "",
       row.reason ? `Why: ${row.reason}` : "",
+      row.details ? `What goes out:\n${row.details.slice(0, 2_000)}` : "",
       "",
       `Approve or deny: ${boardLink("/approvals")}`,
     ]
-      .filter((l, i) => l || i === 3)
+      .filter((l, i, all) => l || i === all.length - 2)
       .join("\n"),
   );
   return row;
@@ -696,6 +709,152 @@ export async function findOpenApproval(agentId: string, action: string): Promise
 /** Marks a decided approval as used, so the same action has to be approved again next time. */
 export async function consumeApproval(id: string): Promise<void> {
   await db.update(approvals).set({ consumedAt: Date.now() }).where(eq(approvals.id, id));
+}
+
+/** A request nobody decides on within this many hours expires; the agent takes it as a no. */
+export const APPROVAL_PENDING_HOURS = Number(process.env.APPROVAL_PENDING_HOURS ?? 24);
+/** An approval must be used within this many minutes of your OK, or the agent has to ask again. */
+export const APPROVAL_VALID_MINUTES = Number(process.env.APPROVAL_VALID_MINUTES ?? 60);
+
+/** Marks requests that waited too long as expired, and puts their tasks back in front of you. */
+export async function expireApprovals(now = Date.now()): Promise<Approval[]> {
+  const rows = await db
+    .update(approvals)
+    .set({ decision: "expired", decidedAt: now })
+    .where(and(eq(approvals.decision, "pending"), sql`${approvals.createdAt} < ${now - APPROVAL_PENDING_HOURS * 60 * 60_000}`))
+    .returning();
+  for (const r of rows) {
+    await addEvent({ agentId: r.agentId, taskId: r.taskId, type: "note", payload: { text: `Approval expired without a decision: "${r.action}"`, approvalId: r.id } });
+  }
+  return rows;
+}
+
+/** An approved request that sat unused past its window; it no longer counts. */
+export function approvalTooOld(a: Approval, now = Date.now()): boolean {
+  return a.decision === "approved" && a.decidedAt != null && now - a.decidedAt > APPROVAL_VALID_MINUTES * 60_000;
+}
+
+export async function expireApproval(id: string): Promise<void> {
+  await db.update(approvals).set({ decision: "expired", consumedAt: Date.now() }).where(eq(approvals.id, id));
+}
+
+// ---------------------------------------------------------------- emergency stop
+
+type StopState = { at: number; agentIds: string[] };
+
+async function getSetting<T>(key: string): Promise<T | null> {
+  const [row] = await db.select().from(settings).where(eq(settings.key, key));
+  return (row?.value as T | undefined) ?? null;
+}
+
+async function setSetting(key: string, value: unknown | null): Promise<void> {
+  if (value === null) {
+    await db.delete(settings).where(eq(settings.key, key));
+    return;
+  }
+  await db
+    .insert(settings)
+    .values({ key, value, updatedAt: Date.now() })
+    .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: Date.now() } });
+}
+
+export async function getEmergencyStop(): Promise<StopState | null> {
+  return getSetting<StopState>("emergency_stop");
+}
+
+/**
+ * Stops every agent at once: each gets a stop command (hosted runs end at their
+ * next step, outside agents see it in their inbox and hook), nothing new starts,
+ * and every action is refused until you resume. Closing the cloud computers is
+ * done by the caller (see src/lib/sandbox/session.ts).
+ */
+export async function emergencyStop(): Promise<StopState> {
+  const existing = await getEmergencyStop();
+  if (existing) return existing;
+  const running = (await db.select({ id: agents.id, status: agents.status }).from(agents)).filter((a) => a.status !== "paused");
+  for (const a of running) await sendCommand(a.id, "stop", "Emergency stop by the user");
+  const state = { at: Date.now(), agentIds: running.map((a) => a.id) };
+  await setSetting("emergency_stop", state);
+  await addEvent({ agentId: null, type: "status_change", payload: { text: `turned on the emergency stop (${running.length} agent${running.length === 1 ? "" : "s"} stopped)` } });
+  return state;
+}
+
+/** Lifts the stop and resumes the agents it stopped. Agents you had paused yourself stay paused. */
+export async function resumeAfterEmergencyStop(): Promise<number> {
+  const state = await getEmergencyStop();
+  if (!state) return 0;
+  if (state.agentIds.length) {
+    // A stop nobody picked up would otherwise end the agent's next task right away.
+    await db
+      .update(commands)
+      .set({ status: "done" })
+      .where(and(inArray(commands.agentId, state.agentIds), eq(commands.type, "stop"), eq(commands.status, "pending")));
+  }
+  for (const id of state.agentIds) await sendCommand(id, "resume", "Resumed after the emergency stop");
+  await setSetting("emergency_stop", null);
+  await addEvent({ agentId: null, type: "status_change", payload: { text: "turned off the emergency stop" } });
+  return state.agentIds.length;
+}
+
+// ---------------------------------------------------------------- audit log
+
+export type AuditEntry = {
+  at: number;
+  /** Who did it: an agent's name, or "You". */
+  actor: string;
+  /** The agent it concerns, for filtering. */
+  agentId: string | null;
+  taskId: string | null;
+  kind: "tool" | "file" | "status" | "error" | "note" | "approval" | "command";
+  text: string;
+  detail?: string;
+};
+
+/** Everything that happened, newest first: tool calls, files, approvals asked, decided and used, and your commands. */
+export async function getAuditLog(opts: { agentId?: string; limit?: number } = {}): Promise<AuditEntry[]> {
+  const limit = opts.limit ?? 300;
+  const [evts, aprs, cmds, everyone] = await Promise.all([
+    getEvents({ agentId: opts.agentId, limit }),
+    db
+      .select()
+      .from(approvals)
+      .where(opts.agentId ? eq(approvals.agentId, opts.agentId) : undefined)
+      .orderBy(desc(approvals.createdAt))
+      .limit(limit),
+    db
+      .select()
+      .from(commands)
+      .where(opts.agentId ? eq(commands.agentId, opts.agentId) : undefined)
+      .orderBy(desc(commands.createdAt))
+      .limit(limit),
+    db.select({ id: agents.id, name: agents.name }).from(agents),
+  ]);
+  const name = (id: string | null) => (id ? everyone.find((a) => a.id === id)?.name ?? "A removed agent" : "You");
+  const kindOf: Record<AgentEvent["type"], AuditEntry["kind"]> = { tool_call: "tool", file_edit: "file", status_change: "status", error: "error", note: "note" };
+  const out: AuditEntry[] = [];
+  for (const e of evts) {
+    const p = e.payload as { text?: unknown; tool?: unknown; input?: unknown; error?: unknown; approvalId?: unknown };
+    // Approval notes repeat what the approval rows below already say.
+    if (p.approvalId) continue;
+    const text = typeof p.text === "string" ? p.text : typeof p.tool === "string" ? `called ${p.tool}${p.error ? " (failed)" : ""}` : e.type;
+    const detail = p.input !== undefined ? JSON.stringify(p.input).slice(0, 1_000) : typeof p.error === "string" ? p.error : undefined;
+    out.push({ at: e.at, actor: name(e.agentId), agentId: e.agentId, taskId: e.taskId, kind: kindOf[e.type], text, detail });
+  }
+  for (const a of aprs) {
+    const where = a.service ? ` (${a.service})` : "";
+    const base = { agentId: a.agentId, taskId: a.taskId, kind: "approval" as const };
+    out.push({ ...base, at: a.createdAt, actor: name(a.agentId), text: `asked to: ${a.action}${where}`, detail: a.details || a.reason || undefined });
+    if (a.decidedAt && a.decision === "expired") {
+      out.push({ ...base, at: a.decidedAt, actor: name(a.agentId), text: `request expired without a decision: ${a.action}` });
+    } else if (a.decidedAt) {
+      out.push({ ...base, at: a.decidedAt, actor: "You", text: `${a.decision} ${name(a.agentId)}'s request: ${a.action}` });
+    }
+    if (a.consumedAt && a.decision === "approved") out.push({ ...base, at: a.consumedAt, actor: name(a.agentId), text: `used the approval: ${a.action}` });
+  }
+  for (const c of cmds) {
+    out.push({ at: c.createdAt, actor: "You", agentId: c.agentId, taskId: null, kind: "command", text: `sent ${c.type} to ${name(c.agentId)}${c.text ? `: ${c.text}` : ""}` });
+  }
+  return out.sort((x, y) => y.at - x.at).slice(0, limit);
 }
 
 /** Hosted agents (run by AgentsHUB) with the raw row, for the runner. */
@@ -718,13 +877,13 @@ export async function decideApproval(id: string, decision: "approved" | "denied"
   if (row.taskId) {
     const task = await getTask(row.taskId);
     if (task?.column === "waiting_on_you") await updateTask(row.taskId, { column: "in_progress" });
-    await addEvent({
-      agentId: null,
-      taskId: row.taskId,
-      type: "note",
-      payload: { text: `You ${decision} "${row.action}"` },
-    });
   }
+  await addEvent({
+    agentId: null,
+    taskId: row.taskId,
+    type: "note",
+    payload: { text: `You ${decision} "${row.action}"`, approvalId: row.id },
+  });
   const stillWaiting = await db
     .select({ id: approvals.id })
     .from(approvals)

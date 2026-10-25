@@ -4,7 +4,7 @@ import { z } from "zod";
 import * as data from "@/lib/data";
 import { diffLines, toHunks } from "@/lib/diff";
 import { cleanDisabledTools } from "@/lib/tool-hub";
-import { AGENT_KINDS, AGENT_ROLES, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROJECT_STATUSES, PROVIDERS } from "@/lib/schema";
+import { AGENT_KINDS, AGENT_ROLES, AUTONOMY_LEVELS, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROJECT_STATUSES, PROVIDERS } from "@/lib/schema";
 
 // Server actions used by the dashboard. The user is the actor (agentId null).
 
@@ -74,6 +74,22 @@ export async function rotateTokenAction(agentId: string) {
 
 export async function setAgentRoleAction(agentId: string, role: (typeof AGENT_ROLES)[number]) {
   await data.setAgentRole(agentId, z.enum(AGENT_ROLES).parse(role));
+}
+
+export async function setAgentAutonomyAction(agentId: string, autonomy: (typeof AUTONOMY_LEVELS)[number]) {
+  await data.setAgentAutonomy(agentId, z.enum(AUTONOMY_LEVELS).parse(autonomy));
+}
+
+/** Stops every agent and closes every cloud computer. */
+export async function emergencyStopAction() {
+  const state = await data.emergencyStop();
+  const { reapOrphanedSandboxes } = await import("@/lib/sandbox/session");
+  const closed = await reapOrphanedSandboxes("Closed by the emergency stop");
+  return { agents: state.agentIds.length, sandboxes: closed };
+}
+
+export async function resumeAllAction() {
+  return { agents: await data.resumeAfterEmergencyStop() };
 }
 
 export async function setAgentSandboxAction(agentId: string, enabled: boolean) {

@@ -27,6 +27,7 @@ import {
   getAgentMemories,
   getAgents,
   getCommands,
+  getEmergencyStop,
   getHostedAgents,
   getArtifacts,
   getEvents,
@@ -136,6 +137,8 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
+    // Nothing starts while the emergency stop is on.
+    if (await getEmergencyStop()) return;
     const hosted = await getHostedAgents();
     for (const agent of hosted) {
       if (jobs.has(agent.id)) continue;

@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentRoleAction, setAgentSandboxAction } from "@/app/actions";
+import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentAutonomyAction, setAgentRoleAction, setAgentSandboxAction } from "@/app/actions";
 import { timeAgo } from "@/lib/format";
-import type { AgentRole, Command, Provider } from "@/lib/schema";
+import type { AgentRole, Autonomy, Command, Provider } from "@/lib/schema";
 import { connectSnippets } from "@/lib/snippets";
 import { useLive } from "../live";
 import { CopyBox, Modal } from "../ui";
@@ -16,6 +16,7 @@ export function AgentControls({
   provider,
   model,
   role,
+  autonomy,
   commands,
   sandbox,
 }: {
@@ -25,6 +26,7 @@ export function AgentControls({
   provider: Provider;
   model: string;
   role: AgentRole;
+  autonomy: Autonomy;
   commands: Command[];
   /** Hosted agents only: whether it may open a cloud computer, and whether the server can provide one. */
   sandbox: { enabled: boolean; ready: boolean } | null;
@@ -88,6 +90,26 @@ export function AgentControls({
           }}
         >
           {role === "lead" ? "Make team member" : "Make team lead"}
+        </button>
+      </section>
+
+      <section className="card p-4">
+        <h2 className="mb-1 font-semibold">When to ask you</h2>
+        <p className="mb-3 text-sm text-ink-soft">
+          {autonomy === "cautious"
+            ? "Cautious: asks before every command on its cloud computer and before sharing a link, on top of the usual approvals."
+            : "Standard: works on its own and asks before anything irreversible, anything that costs money, and anything that sends or publishes outside."}
+        </p>
+        <button
+          type="button"
+          className="btn-ghost border border-line"
+          onClick={async () => {
+            await setAgentAutonomyAction(agentId, autonomy === "cautious" ? "standard" : "cautious");
+            await refresh();
+            router.refresh();
+          }}
+        >
+          {autonomy === "cautious" ? "Switch to standard" : "Make it cautious"}
         </button>
       </section>
 

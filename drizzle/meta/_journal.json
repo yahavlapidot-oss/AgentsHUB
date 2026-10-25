@@ -57,6 +57,13 @@
       "when": 1792956221043,
       "tag": "0007_projects",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792956934602,
+      "tag": "0008_approvals_autonomy",
+      "breakpoints": true
     }
   ]
 }

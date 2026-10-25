@@ -11,7 +11,10 @@ export const PRIORITIES = ["low", "medium", "high", "critical"] as const;
 export const EVENT_TYPES = ["tool_call", "file_edit", "note", "error", "status_change"] as const;
 export const COMMAND_TYPES = ["pause", "resume", "redirect", "stop"] as const;
 export const RISKS = ["low", "medium", "high"] as const;
-export const DECISIONS = ["pending", "approved", "denied"] as const;
+/** "expired": nobody decided in time, or an approval wasn't used while it was valid. */
+export const DECISIONS = ["pending", "approved", "denied", "expired"] as const;
+/** standard: asks for what the approval policy flags. cautious: also asks before every command on its cloud computer and every public link. */
+export const AUTONOMY_LEVELS = ["standard", "cautious"] as const;
 export const SANDBOX_STATUSES = ["starting", "running", "closed", "failed"] as const;
 export const ARTIFACT_KINDS = ["code", "document", "image", "pdf", "data", "website", "other"] as const;
 export const ARTIFACT_STATUSES = ["draft", "in_review", "approved", "failed"] as const;
@@ -19,6 +22,7 @@ export const PROJECT_STATUSES = ["active", "paused", "done"] as const;
 
 export type Provider = (typeof PROVIDERS)[number];
 export type AgentRole = (typeof AGENT_ROLES)[number];
+export type Autonomy = (typeof AUTONOMY_LEVELS)[number];
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 export type Column = (typeof COLUMNS)[number];
 export type Priority = (typeof PRIORITIES)[number];
@@ -40,6 +44,7 @@ export const agents = sqliteTable("agents", {
   inboxReadAt: integer("inbox_read_at"),
   /** Hosted agents: may open a cloud computer (sandbox) to write and run code. */
   sandboxEnabled: integer("sandbox_enabled", { mode: "boolean" }).notNull().default(false),
+  autonomy: text("autonomy", { enum: AUTONOMY_LEVELS }).notNull().default("standard"),
   /** Tools you turned off for this agent (see src/lib/tool-hub.ts). */
   disabledTools: text("disabled_tools", { mode: "json" }).$type<string[]>().notNull().default([]),
   status: text("status", { enum: AGENT_STATUSES }).notNull().default("offline"),
@@ -152,6 +157,10 @@ export const approvals = sqliteTable("approvals", {
   taskId: text("task_id"),
   action: text("action").notNull(),
   reason: text("reason").notNull().default(""),
+  /** Where the action happens, e.g. "GitHub", "Email", "Payments". */
+  service: text("service").notNull().default(""),
+  /** What will be sent or changed outside, so you can see it before deciding. */
+  details: text("details").notNull().default(""),
   risk: text("risk", { enum: RISKS }).notNull().default("medium"),
   decision: text("decision", { enum: DECISIONS }).notNull().default("pending"),
   createdAt: integer("created_at").notNull(),
@@ -190,6 +199,13 @@ export const agentMemories = sqliteTable(
   },
   (t) => [uniqueIndex("agent_memories_agent_title").on(t.agentId, t.title)],
 );
+
+/** Server-wide switches, e.g. the emergency stop. One JSON value per key. */
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value", { mode: "json" }).$type<unknown>().notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
 
 /** Cloud computers (see src/lib/sandbox). One per hosted run that needs one; closed when the run ends. */
 export const sandboxes = sqliteTable(

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { EmergencyStopButton } from "./emergency-stop";
 import { useLive } from "./live";
 
 export function Sidebar() {
@@ -18,6 +19,7 @@ export function Sidebar() {
     { href: "/artifacts", label: "Files", icon: "▧" },
     { href: "/usage", label: "Models & tokens", icon: "▤" },
     { href: "/approvals", label: "Approvals", icon: "✓", alert: approvals.length },
+    { href: "/audit", label: "Audit log", icon: "☰" },
   ];
 
   return (
@@ -53,6 +55,9 @@ export function Sidebar() {
           );
         })}
       </ul>
+      <div className="mt-auto">
+        <EmergencyStopButton />
+      </div>
     </nav>
   );
 }

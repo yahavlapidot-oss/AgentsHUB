@@ -132,7 +132,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
             )}
           </section>
         </div>
-        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role}
+        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role} autonomy={agent.autonomy}
           commands={commands}
           sandbox={agent.kind === "hosted" ? { enabled: agent.sandboxEnabled, ready: await sandboxesAvailable() } : null}
         />

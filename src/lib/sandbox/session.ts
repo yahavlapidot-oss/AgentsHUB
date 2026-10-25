@@ -195,19 +195,20 @@ function tail(s: string): string {
 
 /**
  * On server start: sandboxes the database still shows as open belong to runs
- * that died with the last process. Kill them and mark them closed.
+ * that died with the last process. Kill them and mark them closed. The
+ * emergency stop uses it too, to close every cloud computer at once.
  */
-export async function reapOrphanedSandboxes(): Promise<number> {
+export async function reapOrphanedSandboxes(why = "Closed after a server restart"): Promise<number> {
   const open = await getOpenSandboxes();
   if (!open.length) return 0;
   const provider = await getSandboxProvider();
   for (const s of open) {
-    let error: string | null = "Closed after a server restart";
+    let error: string | null = why;
     if (s.externalId && provider.available()) {
       try {
         await provider.kill(s.externalId);
       } catch (e) {
-        error = `Closed after a server restart; kill failed: ${String((e as Error).message ?? e).slice(0, 500)}`;
+        error = `${why}; kill failed: ${String((e as Error).message ?? e).slice(0, 500)}`;
       }
     }
     await updateSandboxRecord(s.id, { status: "closed", endedAt: Date.now(), error, costUsd: sandboxCost(Math.min(Date.now() - s.startedAt, LIFETIME_MS)) });

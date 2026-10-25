@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Figtree, JetBrains_Mono } from "next/font/google";
+import { EmergencyStopBanner } from "@/components/emergency-stop";
 import { LiveProvider } from "@/components/live";
 import { Sidebar } from "@/components/sidebar";
 import { getSnapshot } from "@/lib/data";
@@ -23,7 +24,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <LiveProvider initial={initial}>
           <div className="flex min-h-screen">
             <Sidebar />
-            <main className="min-w-0 flex-1">{children}</main>
+            <main className="min-w-0 flex-1">
+              <EmergencyStopBanner />
+              {children}
+            </main>
           </div>
         </LiveProvider>
       </body>
