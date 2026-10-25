@@ -8,6 +8,7 @@ import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzl
 import { db } from "./db";
 import { newId } from "./ids";
 import { boardLink, notifyByEmail } from "./notify";
+import { getBlobStore } from "./storage";
 import { generateAgentToken, hashToken } from "./tokens";
 import {
   agents,
@@ -775,10 +776,15 @@ export async function saveArtifact(input: {
   }
 
   const { kind, mimeType } = classifyArtifact(path, input.content);
+  const id = newId("art");
+  // With a bucket configured the bytes go there first; the row only points at them.
+  const store = getBlobStore();
+  const storageKey = store ? `artifacts/${input.taskId ?? "no-task"}/${id}` : null;
+  if (store && storageKey) await store.put(storageKey, input.content, mimeType);
   const [row] = await db
     .insert(artifacts)
     .values({
-      id: newId("art"),
+      id,
       taskId: input.taskId,
       agentId: input.agentId,
       runId: input.runId ?? null,
@@ -790,7 +796,8 @@ export async function saveArtifact(input: {
       sizeBytes: input.content.length,
       sha256,
       note: input.note ?? "",
-      content: input.content,
+      content: storageKey ? Buffer.alloc(0) : input.content,
+      storageKey,
       createdAt: Date.now(),
     })
     .returning(artifactInfoColumns);
@@ -822,9 +829,14 @@ export async function getArtifacts(opts: { taskId?: string; latestOnly?: boolean
   });
 }
 
+/** One file with its bytes, read from the bucket when it was saved there. */
 export async function getArtifact(id: string): Promise<Artifact | null> {
   const [row] = await db.select().from(artifacts).where(eq(artifacts.id, id));
-  return row ?? null;
+  if (!row) return null;
+  if (!row.storageKey) return row;
+  const store = getBlobStore();
+  if (!store) throw new ArtifactError(`${row.path} is in the file bucket, but the bucket isn't configured on the server`);
+  return { ...row, content: await store.get(row.storageKey) };
 }
 
 export async function setArtifactStatus(id: string, status: Artifact["status"]): Promise<void> {

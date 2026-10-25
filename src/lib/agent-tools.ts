@@ -14,6 +14,7 @@ import {
   claimTask,
   createTask,
   getAgents,
+  getArtifacts,
   getEvents,
   getInbox,
   getMessages,
@@ -24,6 +25,7 @@ import {
   postMessage,
   reportProgress,
   saveArtifact,
+  setArtifactStatus,
   takePendingCommands,
   writeNote,
 } from "./data";
@@ -325,13 +327,19 @@ export const AGENT_TOOLS: AgentTool[] = [
     run: async ({ taskId, summary }, { agent }) => {
       const task = await reportProgress(agent.id, taskId, { progressPct: 100, column: "review", note: summary });
       await heartbeat(agent.id, { status: "active", currentTaskId: null });
+      // Delivery report: the task's files go up for review with it.
+      const files = await getArtifacts({ taskId, latestOnly: true });
+      for (const f of files) if (f.status === "draft") await setArtifactStatus(f.id, "in_review");
+      const fileLines = files.map((f) => `- ${f.path} (v${f.version}): ${boardLink(`/api/ui/artifacts/${f.id}`)}`);
       if (task) {
         await notifyByEmail(
           `[AgentsHUB] ${agent.name} finished "${task.title}"`,
-          `${summary.slice(0, 4_000)}\n\nIt's waiting for your review.\n${boardLink("/")}`,
+          [summary.slice(0, 4_000), fileLines.length && `Files:\n${fileLines.join("\n")}`, `It's waiting for your review.\n${boardLink("/")}`]
+            .filter(Boolean)
+            .join("\n\n"),
         );
       }
-      return { task };
+      return { task, files: files.map((f) => ({ path: f.path, version: f.version })) };
     },
   }),
 

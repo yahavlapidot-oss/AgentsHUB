@@ -194,7 +194,10 @@ export const artifacts = sqliteTable(
     sha256: text("sha256").notNull(),
     note: text("note").notNull().default(""),
     status: text("status", { enum: ARTIFACT_STATUSES }).notNull().default("draft"),
+    /** The bytes, when they live in the database. Empty when storageKey is set. */
     content: blob("content", { mode: "buffer" }).notNull(),
+    /** Object key in the bucket (see src/lib/storage.ts), or null when the bytes are in `content`. */
+    storageKey: text("storage_key"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("artifacts_task_idx").on(t.taskId), uniqueIndex("artifacts_task_path_version").on(t.taskId, t.path, t.version)],

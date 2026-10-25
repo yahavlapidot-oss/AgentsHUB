@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import * as data from "@/lib/data";
+import { diffLines, toHunks } from "@/lib/diff";
 import { cleanDisabledTools } from "@/lib/tool-hub";
 import { AGENT_KINDS, AGENT_ROLES, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
 
@@ -85,6 +86,20 @@ export async function setAgentToolAction(agentId: string, tool: string, enabled:
   if (enabled) off.delete(tool);
   else off.add(tool);
   await data.setAgentDisabledTools(agentId, cleanDisabledTools([...off]));
+}
+
+/** What changed from one saved version of a file to another, folded around the changes. */
+export async function diffArtifactsAction(fromId: string, toId: string) {
+  const [from, to] = await Promise.all([data.getArtifact(fromId), data.getArtifact(toId)]);
+  if (!from || !to) return { error: "One of the versions no longer exists" };
+  const text = (b: Buffer) => (b.subarray(0, 8192).includes(0) ? null : b.toString("utf8"));
+  const [a, b] = [text(from.content), text(to.content)];
+  if (a === null || b === null) return { error: "Only text files can be compared" };
+  const lines = diffLines(a, b);
+  if (!lines) return { error: "These versions are too large to compare here" };
+  const added = lines.filter((l) => l.type === "add").length;
+  const removed = lines.filter((l) => l.type === "del").length;
+  return { hunks: toHunks(lines), added, removed, from: from.version, to: to.version };
 }
 
 export async function setArtifactStatusAction(artifactId: string, status: (typeof ARTIFACT_STATUSES)[number]) {
