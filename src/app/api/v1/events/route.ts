@@ -7,7 +7,7 @@ const Body = z.object({
   type: z.enum(EVENT_TYPES),
   taskId: z.string().nullable().optional(),
   runId: z.string().nullable().optional(),
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Activity log: tool calls, file edits, notes, errors. */

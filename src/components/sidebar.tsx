@@ -22,6 +22,7 @@ export function Sidebar() {
     { href: "/usage", label: "Usage & costs", icon: "▤" },
     { href: "/approvals", label: "Approvals", icon: "✓", alert: approvals.length },
     { href: "/audit", label: "Audit log", icon: "☰" },
+    { href: "/status", label: "System status", icon: "♥" },
   ];
 
   return (
