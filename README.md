@@ -111,6 +111,12 @@ Set `E2B_API_KEY` on the server (E2B's free Hobby plan comes with $100 of credit
 
 When a later run picks up the same task, the files saved on it are put back into the new sandbox, so the agent can continue where it stopped. Agents without a sandbox (and MCP agents) can also save text files with `save_artifact` and `content`.
 
+### Files: storage, versions and review
+
+Every save of a file adds a version. On the **Files** tab or page, open **older versions** and click **Changes since vN** to see the lines that changed from that version to the latest. When an agent finishes a task, its files move from *Draft* to *In review*, and the finish email lists them with links.
+
+The files' bytes live in the database by default, which is fine for small files. To keep them in an S3-compatible bucket instead (for example a [Railway bucket](https://docs.railway.com/storage-buckets), about $0.015 per GB a month), set `ARTIFACT_S3_BUCKET`, `ARTIFACT_S3_ENDPOINT`, `ARTIFACT_S3_ACCESS_KEY_ID`, `ARTIFACT_S3_SECRET_ACCESS_KEY` and optionally `ARTIFACT_S3_REGION`. In Railway you can set these as references to the bucket's own variables. The database then keeps only the metadata. Files saved before the switch stay readable.
+
 ## Tools and what each agent may use
 
 Every tool an agent can get is listed in one catalog, `src/lib/tool-hub.ts`, with a category and a risk level: *reads*, *changes* (the board or the agent's own sandbox) or *reaches outside* (the internet, a public link). An agent's page has a **Tools** card where you turn tools on or off for that agent. Turned-off tools are hidden from it, for hosted agents and over MCP alike. Core tools (`report_progress`, `complete_task`, `request_approval`, `check_inbox`) always stay on. Approval rules still apply on top.

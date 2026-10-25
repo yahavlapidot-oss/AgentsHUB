@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { setArtifactStatusAction } from "@/app/actions";
+import { diffArtifactsAction, setArtifactStatusAction } from "@/app/actions";
 import { ARTIFACT_STATUS_META, bytes, timeAgo } from "@/lib/format";
 import type { ArtifactInfo } from "@/lib/schema";
 import { useLive } from "./live";
@@ -68,6 +68,7 @@ function ArtifactRow({
   onChange?: () => void;
 }) {
   const [preview, setPreview] = useState(false);
+  const [compareWith, setCompareWith] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>(latest.status);
   const href = `/api/ui/artifacts/${latest.id}`;
   return (
@@ -112,11 +113,17 @@ function ArtifactRow({
                 <span>v{v.version} · {bytes(v.sizeBytes)} · {timeAgo(v.createdAt)}</span>
                 <a className="text-brand hover:underline" href={`/api/ui/artifacts/${v.id}`} target="_blank" rel="noreferrer">Open</a>
                 <a className="text-brand hover:underline" href={`/api/ui/artifacts/${v.id}?download=1`}>Download</a>
+                {isText(v) && isText(latest) && (
+                  <button type="button" className="text-brand hover:underline" onClick={() => setCompareWith((c) => (c === v.id ? null : v.id))}>
+                    {compareWith === v.id ? "Hide changes" : `Changes since v${v.version}`}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         </details>
       )}
+      {compareWith && <VersionDiff fromId={compareWith} toId={latest.id} />}
     </li>
   );
 }
@@ -155,5 +162,52 @@ function TextPreview({ href }: { href: string }) {
   }, [href]);
   return (
     <pre className="mt-3 max-h-96 overflow-auto rounded bg-canvas p-3 font-mono text-xs leading-relaxed">{text ?? "Loading…"}</pre>
+  );
+}
+
+type DiffResult = Awaited<ReturnType<typeof diffArtifactsAction>>;
+
+const LINE_STYLE = {
+  same: "text-ink-soft",
+  add: "bg-[#e6f7ee] text-[#0b6b3a]",
+  del: "bg-[#fde8ec] text-[#a1203a]",
+} as const;
+
+/** Changed lines between two versions, with a few unchanged lines around each change. */
+function VersionDiff({ fromId, toId }: { fromId: string; toId: string }) {
+  const [diff, setDiff] = useState<DiffResult | null>(null);
+  useEffect(() => {
+    let live = true;
+    setDiff(null);
+    diffArtifactsAction(fromId, toId)
+      .then((d) => live && setDiff(d))
+      .catch(() => live && setDiff({ error: "Could not compare these versions" }));
+    return () => {
+      live = false;
+    };
+  }, [fromId, toId]);
+  if (!diff) return <p className="mt-3 text-xs text-ink-soft">Comparing…</p>;
+  if ("error" in diff) return <p className="mt-3 text-xs text-ink-soft">{diff.error}</p>;
+  return (
+    <div className="mt-3">
+      <p className="mb-1 text-xs text-ink-soft">
+        v{diff.from} → v{diff.to}: <span className="text-[#0b6b3a]">+{diff.added}</span> <span className="text-[#a1203a]">−{diff.removed}</span>
+      </p>
+      <div className="max-h-96 overflow-auto rounded bg-white font-mono text-xs ring-1 ring-line">
+        {!diff.hunks.length && <p className="p-3 font-sans text-ink-soft">No changes.</p>}
+        {diff.hunks.map((h, hi) => (
+          <div key={hi}>
+            {h.skippedBefore > 0 && <p className="bg-canvas px-3 py-1 font-sans text-[11px] text-ink-faint">{h.skippedBefore} unchanged lines</p>}
+            {h.lines.map((l, li) => (
+              <pre key={li} className={`whitespace-pre-wrap px-3 ${LINE_STYLE[l.type]}`}>
+                <span className="mr-3 inline-block w-8 select-none text-right text-ink-faint">{l.newNo ?? l.oldNo}</span>
+                {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}
+                {l.text}
+              </pre>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
