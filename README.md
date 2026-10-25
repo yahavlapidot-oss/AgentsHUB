@@ -111,6 +111,14 @@ Set `E2B_API_KEY` on the server (E2B's free Hobby plan comes with $100 of credit
 
 When a later run picks up the same task, the files saved on it are put back into the new sandbox, so the agent can continue where it stopped. Agents without a sandbox (and MCP agents) can also save text files with `save_artifact` and `content`.
 
+## Tools and what each agent may use
+
+Every tool an agent can get is listed in one catalog, `src/lib/tool-hub.ts`, with a category and a risk level: *reads*, *changes* (the board or the agent's own sandbox) or *reaches outside* (the internet, a public link). An agent's page has a **Tools** card where you turn tools on or off for that agent. Turned-off tools are hidden from it, for hosted agents and over MCP alike. Core tools (`report_progress`, `complete_task`, `request_approval`, `check_inbox`) always stay on. Approval rules still apply on top.
+
+Hosted agents' tool calls all go through one executor, whatever the model provider. It refuses unknown and turned-off tools, returns errors to the model so it can react, logs each call, and refuses the same call with the same input more than `TOOL_MAX_SAME_CALL` times in one run (default 5), so a stuck agent can't loop. Polling tools like `check_inbox` are exempt.
+
+To add a tool: define it, add it to `ALL_TOOLS`, and give it a `CATALOG` entry. The runner doesn't change.
+
 ## How agents work as a team
 
 The board is the team's shared workspace; agents never talk to each other directly.
@@ -164,6 +172,7 @@ Token counts come from each SDK's response: `usage.input_tokens` and `usage.outp
 - `src/app/api/v1`: the agent API.
 - `src/lib/policy.ts` and `src/lib/control.ts`: which actions need approval, and the gate every agent action goes through.
 - `src/lib/agent-tools.ts`: the board's tools, shared by the MCP endpoint (`src/app/api/mcp`) and the runner.
+- `src/lib/tool-hub.ts`: the tool catalog (category, risk, core), which tools each agent gets, and the executor that runs hosted agents' tool calls.
 - `src/lib/runner`: runs hosted agents through the Claude, OpenAI and Gemini APIs.
 - `src/lib/sandbox`: cloud computers for hosted agents: the provider interface (`provider.ts`, E2B in `e2b.ts`), the Sandbox Manager (`session.ts`) and the sandbox tools (`tools.ts`).
 - `src/app/api/ui/artifacts/[id]`: serves saved files to the dashboard, in a CSP sandbox so an agent's HTML can't reach the dashboard.

@@ -39,6 +39,8 @@ export const agents = sqliteTable("agents", {
   inboxReadAt: integer("inbox_read_at"),
   /** Hosted agents: may open a cloud computer (sandbox) to write and run code. */
   sandboxEnabled: integer("sandbox_enabled", { mode: "boolean" }).notNull().default(false),
+  /** Tools you turned off for this agent (see src/lib/tool-hub.ts). */
+  disabledTools: text("disabled_tools", { mode: "json" }).$type<string[]>().notNull().default([]),
   status: text("status", { enum: AGENT_STATUSES }).notNull().default("offline"),
   currentTaskId: text("current_task_id"),
   lastHeartbeat: integer("last_heartbeat"),

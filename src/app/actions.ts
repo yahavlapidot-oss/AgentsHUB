@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import * as data from "@/lib/data";
+import { cleanDisabledTools } from "@/lib/tool-hub";
 import { AGENT_KINDS, AGENT_ROLES, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
 
 // Server actions used by the dashboard. The user is the actor (agentId null).
@@ -74,6 +75,16 @@ export async function setAgentRoleAction(agentId: string, role: (typeof AGENT_RO
 
 export async function setAgentSandboxAction(agentId: string, enabled: boolean) {
   await data.setAgentSandbox(agentId, z.boolean().parse(enabled));
+}
+
+/** Turns one tool on or off for an agent. Core tools always stay on. */
+export async function setAgentToolAction(agentId: string, tool: string, enabled: boolean) {
+  const agent = await data.getAgent(agentId);
+  if (!agent) return;
+  const off = new Set(agent.disabledTools);
+  if (enabled) off.delete(tool);
+  else off.add(tool);
+  await data.setAgentDisabledTools(agentId, cleanDisabledTools([...off]));
 }
 
 export async function setArtifactStatusAction(artifactId: string, status: (typeof ARTIFACT_STATUSES)[number]) {

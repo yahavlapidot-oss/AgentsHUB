@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { AGENT_TOOLS, findTool, ToolInputError } from "@/lib/agent-tools";
+import { findTool, ToolInputError } from "@/lib/agent-tools";
+import { toolsForAgent } from "@/lib/tool-hub";
 import { ConflictError, findAgentByToken, heartbeat } from "@/lib/data";
 import { bearerToken } from "@/lib/tokens";
 
@@ -87,12 +88,17 @@ async function handle(r: RpcRequest, agent: NonNullable<Awaited<ReturnType<typeo
       return reply({});
     case "tools/list":
       return reply({
-        tools: AGENT_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+        // Outside agents bring their own machine, so they never get the sandbox tools.
+        tools: toolsForAgent(agent, { sandbox: false }).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });
     case "tools/call": {
       const name = String(r.params?.name ?? "");
-      const tool = findTool(name);
-      if (!tool) return fail(-32602, `Unknown tool: ${name}`);
+      const tool = findTool(name, toolsForAgent(agent, { sandbox: false }));
+      if (!tool) {
+        return agent.disabledTools.includes(name)
+          ? reply({ content: [{ type: "text", text: `${name} is turned off for this agent on AgentsHUB` }], isError: true })
+          : fail(-32602, `Unknown tool: ${name}`);
+      }
       try {
         const result = await tool.run(r.params?.arguments ?? {}, { agent });
         return reply({ content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: asObject(result) });
