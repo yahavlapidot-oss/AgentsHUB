@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentRoleAction } from "@/app/actions";
+import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentRoleAction, setAgentSandboxAction } from "@/app/actions";
 import { timeAgo } from "@/lib/format";
 import type { AgentRole, Command, Provider } from "@/lib/schema";
 import { connectSnippets } from "@/lib/snippets";
@@ -17,6 +17,7 @@ export function AgentControls({
   model,
   role,
   commands,
+  sandbox,
 }: {
   agentId: string;
   agentName: string;
@@ -25,6 +26,8 @@ export function AgentControls({
   model: string;
   role: AgentRole;
   commands: Command[];
+  /** Hosted agents only: whether it may open a cloud computer, and whether the server can provide one. */
+  sandbox: { enabled: boolean; ready: boolean } | null;
 }) {
   const router = useRouter();
   const { refresh } = useLive();
@@ -87,6 +90,33 @@ export function AgentControls({
           {role === "lead" ? "Make team member" : "Make team lead"}
         </button>
       </section>
+
+      {sandbox && (
+        <section className="card p-4">
+          <h2 className="mb-1 font-semibold">Cloud computer</h2>
+          <p className="mb-3 text-sm text-ink-soft">
+            {sandbox.enabled
+              ? "On: for each task the agent gets its own Linux sandbox to write, run and test code. It saves the result as files on the task, and the sandbox is deleted when the task ends."
+              : "Off: the agent works with the board tools only and has no file system."}
+          </p>
+          {sandbox.enabled && !sandbox.ready && (
+            <p className="mb-3 rounded-md bg-[#fff6e5] p-2 text-xs text-[#7a4a00]">
+              The server has no sandbox key yet (E2B_API_KEY), so the agent works without one until it&apos;s set.
+            </p>
+          )}
+          <button
+            type="button"
+            className="btn-ghost border border-line"
+            onClick={async () => {
+              await setAgentSandboxAction(agentId, !sandbox.enabled);
+              await refresh();
+              router.refresh();
+            }}
+          >
+            {sandbox.enabled ? "Turn off" : "Turn on"}
+          </button>
+        </section>
+      )}
 
       <section className="card p-4">
         <h2 className="mb-2 font-semibold">Commands sent</h2>

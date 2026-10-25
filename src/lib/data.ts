@@ -3,7 +3,8 @@
  * through here, so the storage (or a future realtime server) can change without
  * touching components.
  */
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
 import { boardLink, notifyByEmail } from "./notify";
@@ -11,13 +12,18 @@ import { generateAgentToken, hashToken } from "./tokens";
 import {
   agents,
   approvals,
+  artifacts,
   commands,
   events,
   messages,
   notes,
   runs,
+  sandboxes,
   tasks,
   type Agent,
+  type Artifact,
+  type ArtifactInfo,
+  type ArtifactKind,
   type AgentEvent,
   type Approval,
   type Column,
@@ -30,6 +36,7 @@ import {
   type Provider,
   type PublicAgent,
   type Run,
+  type Sandbox,
   type Task,
 } from "./schema";
 
@@ -172,6 +179,7 @@ export async function createAgent(input: {
   skills?: string[];
   instructions?: string;
   role?: AgentRole;
+  sandboxEnabled?: boolean;
 }): Promise<{ agent: PublicAgent; token: string }> {
   const token = generateAgentToken();
   const [row] = await db
@@ -186,6 +194,7 @@ export async function createAgent(input: {
       skills: input.skills ?? [],
       instructions: input.instructions ?? "",
       role: input.role ?? "member",
+      sandboxEnabled: input.sandboxEnabled ?? false,
       tokenHash: hashToken(token),
       createdAt: Date.now(),
     })
@@ -202,6 +211,10 @@ export async function rotateAgentToken(agentId: string): Promise<string> {
 
 export async function setAgentRole(agentId: string, role: AgentRole): Promise<void> {
   await db.update(agents).set({ role }).where(eq(agents.id, agentId));
+}
+
+export async function setAgentSandbox(agentId: string, enabled: boolean): Promise<void> {
+  await db.update(agents).set({ sandboxEnabled: enabled }).where(eq(agents.id, agentId));
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
@@ -521,6 +534,15 @@ export async function recordUsage(
   return run;
 }
 
+/** Everything spent on a task so far: model tokens and sandbox time, over all runs. */
+export async function getTaskCost(taskId: string): Promise<number> {
+  const [row] = await db
+    .select({ cost: sql<number>`coalesce(sum(${runs.costUsd}), 0)` })
+    .from(runs)
+    .where(eq(runs.taskId, taskId));
+  return row?.cost ?? 0;
+}
+
 export async function getRun(runId: string): Promise<Run | null> {
   const [row] = await db.select().from(runs).where(eq(runs.id, runId));
   return row ?? null;
@@ -657,6 +679,191 @@ export async function decideApproval(id: string, decision: "approved" | "denied"
       .where(and(eq(agents.id, row.agentId), eq(agents.status, "waiting")));
   }
   return row;
+}
+
+// ---------------------------------------------------------------- sandboxes
+
+export async function createSandboxRecord(input: {
+  agentId: string;
+  taskId: string | null;
+  runId: string | null;
+  provider: string;
+}): Promise<Sandbox> {
+  const [row] = await db
+    .insert(sandboxes)
+    .values({ id: newId("sbx"), ...input, status: "starting", startedAt: Date.now() })
+    .returning();
+  return row;
+}
+
+export async function updateSandboxRecord(
+  id: string,
+  patch: Partial<Pick<Sandbox, "externalId" | "status" | "costUsd" | "error" | "endedAt">> & { addCommands?: number },
+): Promise<void> {
+  const { addCommands, ...rest } = patch;
+  await db
+    .update(sandboxes)
+    .set({ ...rest, ...(addCommands ? { commands: sql`${sandboxes.commands} + ${addCommands}` } : {}) })
+    .where(eq(sandboxes.id, id));
+}
+
+/** Sandboxes that are starting or running, newest first. */
+export async function getOpenSandboxes(): Promise<Sandbox[]> {
+  return db
+    .select()
+    .from(sandboxes)
+    .where(inArray(sandboxes.status, ["starting", "running"]))
+    .orderBy(desc(sandboxes.startedAt));
+}
+
+export async function getSandboxes(opts: { taskId?: string; limit?: number } = {}): Promise<Sandbox[]> {
+  return db
+    .select()
+    .from(sandboxes)
+    .where(opts.taskId ? eq(sandboxes.taskId, opts.taskId) : undefined)
+    .orderBy(desc(sandboxes.startedAt))
+    .limit(opts.limit ?? 50);
+}
+
+// ---------------------------------------------------------------- artifacts
+
+/** Largest single file an agent can save, and the most one task can hold across all versions. */
+export const MAX_ARTIFACT_BYTES = Number(process.env.ARTIFACT_MAX_BYTES ?? 5 * 1024 * 1024);
+export const MAX_TASK_ARTIFACT_BYTES = Number(process.env.ARTIFACT_MAX_TASK_BYTES ?? 50 * 1024 * 1024);
+
+const { content: _content, ...artifactInfoColumns } = getTableColumns(artifacts);
+
+/**
+ * Saves a file as the next version of `path` on the task. Saving the exact same
+ * bytes again returns the existing version instead of adding a copy.
+ */
+export async function saveArtifact(input: {
+  taskId: string | null;
+  agentId: string | null;
+  runId?: string | null;
+  sandboxId?: string | null;
+  path: string;
+  content: Buffer;
+  note?: string;
+}): Promise<{ artifact: ArtifactInfo; unchanged: boolean }> {
+  if (input.content.length > MAX_ARTIFACT_BYTES) {
+    throw new ArtifactError(`File is ${input.content.length} bytes; the limit is ${MAX_ARTIFACT_BYTES}`);
+  }
+  const path = normalizeArtifactPath(input.path);
+  const sha256 = createHash("sha256").update(input.content).digest("hex");
+  const sameTask = input.taskId ? eq(artifacts.taskId, input.taskId) : isNull(artifacts.taskId);
+  const [latest] = await db
+    .select(artifactInfoColumns)
+    .from(artifacts)
+    .where(and(sameTask, eq(artifacts.path, path)))
+    .orderBy(desc(artifacts.version))
+    .limit(1);
+  if (latest && latest.sha256 === sha256) return { artifact: latest, unchanged: true };
+
+  if (input.taskId) {
+    const [used] = await db
+      .select({ bytes: sql<number>`coalesce(sum(${artifacts.sizeBytes}), 0)` })
+      .from(artifacts)
+      .where(eq(artifacts.taskId, input.taskId));
+    if ((used?.bytes ?? 0) + input.content.length > MAX_TASK_ARTIFACT_BYTES) {
+      throw new ArtifactError(`This task's files would pass ${MAX_TASK_ARTIFACT_BYTES} bytes`);
+    }
+  }
+
+  const { kind, mimeType } = classifyArtifact(path, input.content);
+  const [row] = await db
+    .insert(artifacts)
+    .values({
+      id: newId("art"),
+      taskId: input.taskId,
+      agentId: input.agentId,
+      runId: input.runId ?? null,
+      sandboxId: input.sandboxId ?? null,
+      path,
+      version: (latest?.version ?? 0) + 1,
+      kind,
+      mimeType,
+      sizeBytes: input.content.length,
+      sha256,
+      note: input.note ?? "",
+      content: input.content,
+      createdAt: Date.now(),
+    })
+    .returning(artifactInfoColumns);
+  await addEvent({
+    agentId: input.agentId,
+    taskId: input.taskId,
+    runId: input.runId ?? null,
+    type: "file_edit",
+    payload: { text: `Saved ${path} (v${row.version}, ${row.sizeBytes} bytes)`, artifactId: row.id },
+  });
+  return { artifact: row, unchanged: false };
+}
+
+/** Every version, newest first. `latestOnly` keeps one row per task and path. */
+export async function getArtifacts(opts: { taskId?: string; latestOnly?: boolean; limit?: number } = {}): Promise<ArtifactInfo[]> {
+  const rows = await db
+    .select(artifactInfoColumns)
+    .from(artifacts)
+    .where(opts.taskId ? eq(artifacts.taskId, opts.taskId) : undefined)
+    .orderBy(desc(artifacts.createdAt), desc(artifacts.version))
+    .limit(opts.limit ?? 500);
+  if (!opts.latestOnly) return rows;
+  const seen = new Set<string>();
+  return rows.filter((a) => {
+    const key = `${a.taskId}\u0000${a.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export async function getArtifact(id: string): Promise<Artifact | null> {
+  const [row] = await db.select().from(artifacts).where(eq(artifacts.id, id));
+  return row ?? null;
+}
+
+export async function setArtifactStatus(id: string, status: Artifact["status"]): Promise<void> {
+  await db.update(artifacts).set({ status }).where(eq(artifacts.id, id));
+}
+
+export class ArtifactError extends Error {}
+
+/** Relative, forward slashes, no "..": the same file always gets the same name. */
+export function normalizeArtifactPath(path: string): string {
+  const parts = path
+    .replace(/\\/g, "/")
+    .replace(/^\/home\/user\/work\//, "")
+    .split("/")
+    .filter((p) => p && p !== "." && p !== "..");
+  const clean = parts.join("/").slice(0, 300);
+  if (!clean) throw new ArtifactError("Give the file a name");
+  return clean;
+}
+
+const EXT: Record<string, [ArtifactKind, string]> = {
+  ts: ["code", "text/plain"], tsx: ["code", "text/plain"], js: ["code", "text/javascript"], mjs: ["code", "text/javascript"],
+  jsx: ["code", "text/plain"], py: ["code", "text/x-python"], go: ["code", "text/plain"], rs: ["code", "text/plain"],
+  java: ["code", "text/plain"], rb: ["code", "text/plain"], sh: ["code", "text/x-shellscript"], sql: ["code", "text/plain"],
+  css: ["code", "text/css"], c: ["code", "text/plain"], cpp: ["code", "text/plain"], h: ["code", "text/plain"],
+  html: ["website", "text/html"], htm: ["website", "text/html"],
+  md: ["document", "text/markdown"], txt: ["document", "text/plain"], docx: ["document", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  pptx: ["document", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  pdf: ["pdf", "application/pdf"],
+  png: ["image", "image/png"], jpg: ["image", "image/jpeg"], jpeg: ["image", "image/jpeg"], gif: ["image", "image/gif"],
+  webp: ["image", "image/webp"], svg: ["image", "image/svg+xml"],
+  json: ["data", "application/json"], csv: ["data", "text/csv"], yaml: ["data", "text/yaml"], yml: ["data", "text/yaml"],
+  xml: ["data", "application/xml"], xlsx: ["data", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  zip: ["other", "application/zip"],
+};
+
+export function classifyArtifact(path: string, content: Buffer): { kind: ArtifactKind; mimeType: string } {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const known = EXT[ext];
+  if (known) return { kind: known[0], mimeType: known[1] };
+  // Unknown extension: text if it has no NUL bytes in the first 8 KB.
+  const text = !content.subarray(0, 8192).includes(0);
+  return { kind: "other", mimeType: text ? "text/plain" : "application/octet-stream" };
 }
 
 // ---------------------------------------------------------------- helpers

@@ -21,6 +21,7 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<Mode>("hosted");
   const [instructions, setInstructions] = useState("");
   const [lead, setLead] = useState(false);
+  const [computer, setComputer] = useState(false);
   const { refresh } = useLive();
   const router = useRouter();
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -48,6 +49,7 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
         kind: mode === "hosted" ? "hosted" : mode === "mcp" ? "mcp" : "sdk",
         instructions: mode === "hosted" ? instructions : "",
         role: lead ? "lead" : "member",
+        sandboxEnabled: mode === "hosted" && computer,
       });
       setResult(r);
       await refresh();
@@ -196,6 +198,17 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
               placeholder="You are our researcher. Answer with sources and keep summaries short."
             />
           </div>
+        )}
+        {mode === "hosted" && (
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-0.5" checked={computer} onChange={(e) => setComputer(e.target.checked)} />
+            <span>
+              <span className="font-medium">Cloud computer</span>
+              <span className="block text-xs text-ink-faint">
+                Gets its own Linux sandbox for each task to write, run and test code, and saves the files on the task. Needs E2B_API_KEY on the server.
+              </span>
+            </span>
+          </label>
         )}
         <label className="flex items-start gap-2 text-sm">
           <input type="checkbox" className="mt-0.5" checked={lead} onChange={(e) => setLead(e.target.checked)} />

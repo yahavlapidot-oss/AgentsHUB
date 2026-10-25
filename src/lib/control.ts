@@ -20,10 +20,11 @@ export type GateResult =
  */
 export async function gateAction(
   agentId: string,
-  input: { action: string; taskId?: string | null; reason?: string; force?: boolean },
+  input: { action: string; taskId?: string | null; reason?: string; force?: boolean; ignore?: PolicyCategory[] },
 ): Promise<GateResult> {
   const agent = await getAgent(agentId);
-  const policy = evaluatePolicy(input.action);
+  // `ignore` drops rules that don't apply where the action runs, e.g. deleting files inside a throwaway sandbox.
+  const policy = evaluatePolicy(input.action, { ignore: input.ignore });
   const base = { categories: policy.categories, reasons: policy.reasons };
   if (agent?.status === "paused") return { decision: "paused", ...base };
   if (!policy.requiresApproval && !input.force) return { decision: "allow", ...base };

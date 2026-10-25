@@ -43,8 +43,8 @@ export type PolicyResult = {
 };
 
 /** Classifies an action description. `text` is what the agent is about to do. */
-export function evaluatePolicy(text: string): PolicyResult {
-  const hits = RULES.filter((r) => r.pattern.test(text));
+export function evaluatePolicy(text: string, opts: { ignore?: PolicyCategory[] } = {}): PolicyResult {
+  const hits = RULES.filter((r) => !opts.ignore?.includes(r.category) && r.pattern.test(text));
   const categories = [...new Set(hits.map((h) => h.category))];
   const reasons = [...new Set(hits.map((h) => h.label))];
   return { requiresApproval: hits.length > 0, categories, reasons };

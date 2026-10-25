@@ -4,6 +4,7 @@ import { AgentControls } from "@/components/agents/agent-controls";
 import { AgentTimeline } from "@/components/agents/agent-timeline";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { AgentAvatar, ProviderTag } from "@/components/ui";
+import { sandboxesAvailable } from "@/lib/sandbox/provider";
 import { getAgent, getCommands, getEvents, getRuns, getTasks } from "@/lib/data";
 import { AGENT_STATUS_META, COLUMN_META, compact, timeAgo, usd } from "@/lib/format";
 
@@ -125,7 +126,10 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
             )}
           </section>
         </div>
-        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role} commands={commands} />
+        <AgentControls agentId={agent.id} agentName={agent.name} paused={agent.status === "paused"} provider={agent.provider} model={agent.model} role={agent.role}
+          commands={commands}
+          sandbox={agent.kind === "hosted" ? { enabled: agent.sandboxEnabled, ready: await sandboxesAvailable() } : null}
+        />
       </div>
     </div>
   );

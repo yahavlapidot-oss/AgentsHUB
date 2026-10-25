@@ -3,19 +3,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { getTaskDetailAction, sendMessageAction, updateTaskAction } from "@/app/actions";
 import { COLUMN_META, PRIORITY_META, timeAgo, usd } from "@/lib/format";
-import type { AgentEvent, Column, Message, Priority } from "@/lib/schema";
+import type { AgentEvent, ArtifactInfo, Column, Message, Priority } from "@/lib/schema";
+import { ArtifactsList } from "../artifacts-list";
 import { describeEvent } from "../event-line";
 import { useLive } from "../live";
 import { AgentAvatar, ColorPicker, ProgressBar, ProviderTag, UserAvatar } from "../ui";
 import { OwnerPicker } from "./owner-picker";
 
-type Tab = "updates" | "activity" | "details";
+type Tab = "updates" | "activity" | "files" | "details";
 
 export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const { tasks, agents, refresh, generatedAt } = useLive();
   const task = tasks.find((t) => t.id === taskId);
   const [tab, setTab] = useState<Tab>("updates");
-  const [detail, setDetail] = useState<{ events: AgentEvent[]; messages: Message[] }>({ events: [], messages: [] });
+  const [detail, setDetail] = useState<{ events: AgentEvent[]; messages: Message[]; artifacts: ArtifactInfo[] }>({
+    events: [],
+    messages: [],
+    artifacts: [],
+  });
 
   const load = useCallback(async () => setDetail(await getTaskDetailAction(taskId)), [taskId]);
   // Reload whenever the live snapshot ticks.
@@ -67,7 +72,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
             <div className="max-w-xs"><ProgressBar pct={task.progressPct} color={COLUMN_META[task.column].color} /></div>
           </div>
           <div role="tablist" className="mt-4 flex gap-1">
-            {(["updates", "activity", "details"] as const).map((t) => (
+            {(["updates", "activity", "files", "details"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -76,7 +81,13 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                 onClick={() => setTab(t)}
                 className={`border-b-2 px-3 py-1.5 text-sm font-medium capitalize ${tab === t ? "border-brand" : "border-transparent text-ink-soft hover:text-ink"}`}
               >
-                {t === "updates" ? `Updates (${detail.messages.length})` : t === "activity" ? `Activity (${detail.events.length})` : "Details"}
+                {t === "updates"
+                  ? `Updates (${detail.messages.length})`
+                  : t === "activity"
+                    ? `Activity (${detail.events.length})`
+                    : t === "files"
+                      ? `Files (${new Set(detail.artifacts.map((a) => a.path)).size})`
+                      : "Details"}
               </button>
             ))}
           </div>
@@ -85,6 +96,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
         <div className="min-h-0 flex-1 overflow-y-auto bg-canvas px-6 py-4">
           {tab === "updates" && <Updates taskId={taskId} ownerId={task.ownerAgentId} messages={detail.messages} onSent={load} />}
           {tab === "activity" && <Activity events={detail.events} />}
+          {tab === "files" && <ArtifactsList artifacts={detail.artifacts} onChange={load} />}
           {tab === "details" && <Details taskId={taskId} />}
         </div>
       </aside>
@@ -166,6 +178,7 @@ export function Activity({ events }: { events: AgentEvent[] }) {
               {d.icon}
             </span>
             <p className={`text-sm ${d.tone === "error" ? "text-[#d83a52]" : ""}`}>{d.text}</p>
+            {d.detail && <pre className="mt-1 max-h-32 overflow-auto rounded bg-white p-2 font-mono text-[11px] text-ink-soft ring-1 ring-line">{d.detail}</pre>}
             <p className="text-xs text-ink-faint">
               {agent?.name ?? (e.agentId ? "Agent" : "You")} · {timeAgo(e.at)}
             </p>

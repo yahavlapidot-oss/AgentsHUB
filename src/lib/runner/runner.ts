@@ -14,7 +14,7 @@
  * redirect commands are read between model turns; request_approval waits for
  * your decision on the Approvals page.
  */
-import { AGENT_TOOLS, findTool, ToolInputError, type ToolContext } from "../agent-tools";
+import { AGENT_TOOLS, findTool, ToolInputError, type AgentTool, type ToolContext } from "../agent-tools";
 import { gateAction, type GateResult } from "../control";
 import {
   addEvent,
@@ -30,6 +30,7 @@ import {
   getInbox,
   getNotes,
   getTask,
+  getTaskCost,
   getTasks,
   getWakeMessages,
   heartbeat,
@@ -40,6 +41,9 @@ import {
 } from "../data";
 import { boardLink, notifyByEmail } from "../notify";
 import { costUsd } from "../pricing";
+import { sandboxesAvailable } from "../sandbox/provider";
+import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
+import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "../sandbox/tools";
 import type { Agent, Message, PublicAgent, Task } from "../schema";
 import { createChat, MissingKeyError, type ToolOutput } from "./providers";
 
@@ -58,8 +62,16 @@ You have been given one task. Work on it using the board tools:
 - Talk to other agents with send_message. The user reads that chat too.
 - The team notes are the team's shared memory. Check read_notes when earlier decisions may matter, and save decisions, conventions and results others will need with write_note.
 - Before anything irreversible, anything that costs money, or anything that publishes or sends something outside, call request_approval and only proceed on 'allow'.
-- Your result is the text you write: put the full deliverable in complete_task's summary (or in a message), since you have no file system.
 - Finish with complete_task. If you cannot finish, explain why in report_progress and then call complete_task with what you have.`;
+
+const NO_COMPUTER = `You have no file system. Put the full deliverable in complete_task's summary, and save files the user should get (a document, code, data) with save_artifact and their text in content.`;
+
+const COMPUTER = `You have your own cloud computer: a fresh Linux machine with Node.js, npm, Python and pip, and internet access. It exists only for this task and is deleted when the task ends.
+- Work in ${WORKDIR}. Use write_file to create files, run_command to install packages, run the code and run its tests, and read_file / list_files to look around. Files saved on this task before are already there.
+- Check your work by running it. Fix failures before you finish; say in your summary what you ran and what passed.
+- For a web app or page, you can start it with run_command (background=true) and share preview_url, but that link dies with the computer.
+- Save every file the user should get with save_artifact (pass its path) before complete_task. Anything not saved is lost.
+- Pushing code, deploying, publishing or anything that sends or pays outside needs request_approval first, as everywhere.`;
 
 const LEAD = `You are the team lead. New tasks come to you first. For each one, decide who should do it:
 - Small, or clearly your own kind of work: do it yourself.
@@ -73,8 +85,13 @@ You are between tasks, and you were woken up because someone wrote to you. Read 
 - Save decisions in the team notes with write_note.
 - Don't reply just to acknowledge or say thanks. When you're done, reply without calling a tool.`;
 
-function systemFor(agent: Agent, base: string): string {
-  return [base, agent.role === "lead" && LEAD, agent.instructions && `Your own instructions from the user:\n${agent.instructions}`]
+function systemFor(agent: Agent, base: string, computer?: boolean): string {
+  return [
+    base,
+    computer === undefined ? null : computer ? COMPUTER : NO_COMPUTER,
+    agent.role === "lead" && LEAD,
+    agent.instructions && `Your own instructions from the user:\n${agent.instructions}`,
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -90,6 +107,10 @@ const state = globalThis as unknown as {
 export function startRunner(): void {
   if (state.agentshubRunner) return;
   const jobs = new Map<string, Job>();
+  // Sandboxes still marked open belong to runs that died with the last server process.
+  void reapOrphanedSandboxes()
+    .then((n) => n && console.log(`[runner] closed ${n} sandbox${n === 1 ? "" : "es"} left from before the restart`))
+    .catch((e) => console.error("[runner] could not close old sandboxes", e));
   const timer = setInterval(() => void tick(jobs), TICK_MS);
   timer.unref?.();
   state.agentshubRunner = { timer, jobs };
@@ -165,28 +186,38 @@ export async function runTask(agent: Agent, task: Task): Promise<void> {
     throw e;
   }
   const run = await startRun(agent.id, { taskId: task.id, model: agent.model });
+  const computer = agent.sandboxEnabled && (await sandboxesAvailable());
+  const sandbox = computer ? new SandboxSession({ agentId: agent.id, taskId: task.id, runId: run.id }) : undefined;
   let outcome: "success" | "failed" | "cancelled" = "failed";
   try {
-    outcome = await loop(agent, task, run.id);
+    outcome = await loop(agent, task, run.id, sandbox);
   } catch (e) {
     const message = e instanceof MissingKeyError ? e.message : `Agent crashed: ${(e as Error).message ?? e}`;
     console.error(`[runner] ${agent.name} on ${task.id}:`, e);
     await failTask(agent, task, run.id, message);
   } finally {
+    // Always close the cloud computer; its time is added to the run's cost.
+    await sandbox?.close(outcome === "failed" ? "failed" : "closed").catch((e) => console.error("[runner] sandbox close failed", e));
     await endRun(agent.id, run.id, outcome);
     await heartbeat(agent.id, { currentTaskId: null });
   }
 }
 
-async function loop(agent: Agent, task: Task, runId: string): Promise<"success" | "failed" | "cancelled"> {
+async function loop(
+  agent: Agent,
+  task: Task,
+  runId: string,
+  sandbox?: SandboxSession,
+): Promise<"success" | "failed" | "cancelled"> {
+  const tools: AgentTool[] = sandbox ? [...AGENT_TOOLS, ...SANDBOX_TOOLS] : AGENT_TOOLS;
   const chat = createChat({
     provider: agent.provider,
     model: agent.model,
-    system: systemFor(agent, SYSTEM),
-    tools: AGENT_TOOLS,
+    system: systemFor(agent, SYSTEM, Boolean(sandbox)),
+    tools,
   });
 
-  const ctx: ToolContext = { agent, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const ctx: ToolContext = { agent, taskId: task.id, runId, sandbox, waitForApproval: (gate) => waitForDecision(agent, gate) };
 
   // Messages that came in while the agent was idle arrive with the first turn.
   let lastInboxCheck = inboxSince(agent);
@@ -204,6 +235,11 @@ async function loop(agent: Agent, task: Task, runId: string): Promise<"success" 
 
     if (res.stopProblem) {
       await failTask(agent, task, runId, res.stopProblem);
+      return "failed";
+    }
+    const overBudget = await budgetProblem(task, sandbox);
+    if (overBudget) {
+      await failTask(agent, task, runId, overBudget);
       return "failed";
     }
     if (res.text.trim()) {
@@ -249,7 +285,7 @@ async function loop(agent: Agent, task: Task, runId: string): Promise<"success" 
     const outputs: ToolOutput[] = [];
     let completed = false;
     for (const call of res.toolCalls) {
-      const tool = findTool(call.name);
+      const tool = findTool(call.name, tools);
       if (!tool) {
         outputs.push({ id: call.id, name: call.name, output: `Unknown tool ${call.name}`, isError: true });
         continue;
@@ -292,7 +328,16 @@ async function failTask(agent: Agent, task: Task, runId: string, text: string): 
 }
 
 /** Tools that already write their own activity line. */
-const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message"]);
+const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message", "save_artifact", ...SANDBOX_LOGGED_TOOLS]);
+
+/** The task's budget covers every run on it: model tokens plus cloud computer time. */
+async function budgetProblem(task: Task, sandbox?: SandboxSession): Promise<string | null> {
+  // Read it fresh: you may have changed the budget while the agent works.
+  const budget = (await getTask(task.id))?.budgetUsd;
+  if (budget == null) return null;
+  const spent = (await getTaskCost(task.id)) + (sandbox?.runningCost() ?? 0);
+  return spent >= budget ? `Stopped: the task's budget of $${budget.toFixed(2)} is used up ($${spent.toFixed(2)} spent)` : null;
+}
 
 /** Handles pause (waits here), stop, and redirect commands, and collects new messages for the agent. */
 async function readControl(agent: Agent, task: Task | null, since: number): Promise<{ stop: boolean; note?: string }> {

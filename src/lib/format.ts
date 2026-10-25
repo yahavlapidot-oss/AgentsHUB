@@ -57,3 +57,16 @@ export function initials(name: string): string {
   const parts = name.replace(/[^\p{L}\p{N} ]/gu, " ").trim().split(/\s+/);
   return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
+
+export function bytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export const ARTIFACT_STATUS_META = {
+  draft: { label: "Draft", color: "#c4c4c4", text: "#323338" },
+  in_review: { label: "In review", color: "#a25ddc", text: "#ffffff" },
+  approved: { label: "Approved", color: "#00c875", text: "#ffffff" },
+  failed: { label: "Failed", color: "#e2445c", text: "#ffffff" },
+} as const;
