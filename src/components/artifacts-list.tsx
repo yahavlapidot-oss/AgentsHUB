@@ -24,7 +24,8 @@ export function ArtifactsList({ artifacts, showTask = false, onChange }: { artif
   const { agents, tasks } = useLive();
   const groups = new Map<string, ArtifactInfo[]>();
   for (const a of artifacts) {
-    const key = `${a.taskId}\u0000${a.path}`;
+    // Project files share one history per path across the project's tasks.
+    const key = `${a.projectId ? `p:${a.projectId}` : `t:${a.taskId}`}\u0000${a.path}`;
     groups.set(key, [...(groups.get(key) ?? []), a]);
   }
   if (!groups.size) {

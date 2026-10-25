@@ -17,6 +17,7 @@ import {
   getArtifact,
   getArtifacts,
   getOpenSandboxes,
+  getTask,
   updateSandboxRecord,
 } from "../data";
 import type { Sandbox } from "../schema";
@@ -82,13 +83,29 @@ export class SandboxSession {
     }
   }
 
-  /** Files saved on this task in earlier runs come back, so work can continue where it stopped. */
+  /**
+   * Files saved before come back, so work continues where it stopped: the whole
+   * project workspace for a project task, the task's own files otherwise. The
+   * folder is then a git repository with that state committed, so `git diff`
+   * shows exactly what this run changed.
+   */
   private async restoreFiles(machine: SandboxMachine): Promise<void> {
     if (!this.ctx.taskId) return;
-    for (const info of await getArtifacts({ taskId: this.ctx.taskId, latestOnly: true })) {
+    const projectId = (await getTask(this.ctx.taskId))?.projectId;
+    const files = projectId
+      ? await getArtifacts({ projectId, latestOnly: true, limit: 5_000 })
+      : await getArtifacts({ taskId: this.ctx.taskId, latestOnly: true });
+    for (const info of files) {
       const full = await getArtifact(info.id);
       if (full) await machine.writeFile(`${WORKDIR}/${full.path}`, new Uint8Array(full.content));
     }
+    // Best effort: an image without git just skips this.
+    await machine
+      .run(
+        `git init -q && git config user.email agent@agentshub.local && git config user.name AgentsHUB && git add -A && git commit -q --allow-empty -m "Workspace as saved before this run"`,
+        { cwd: WORKDIR, timeoutMs: 60_000 },
+      )
+      .catch(() => null);
   }
 
   async run(cmd: string, opts: { cwd?: string; timeoutMs?: number } = {}): Promise<CommandResult> {

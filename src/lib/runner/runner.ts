@@ -28,15 +28,19 @@ import {
   getAgents,
   getCommands,
   getHostedAgents,
+  getArtifacts,
   getEvents,
   getInbox,
+  getLastHandoff,
   getMessages,
   getNotes,
+  getProjects,
   getTask,
   getTaskCost,
   getTasks,
   getWakeMessages,
   heartbeat,
+  isProjectMember,
   markInboxRead,
   startRun,
   takePendingCommands,
@@ -48,7 +52,7 @@ import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
 import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
 import { ToolExecutor, toolsForAgent } from "../tool-hub";
-import type { Agent, AgentMemory, Message, PublicAgent, Task } from "../schema";
+import type { Agent, AgentMemory, ArtifactInfo, Message, Project, PublicAgent, Task } from "../schema";
 import { createChat, MissingKeyError, type ToolOutput } from "./providers";
 
 const TICK_MS = Number(process.env.RUNNER_TICK_MS ?? 10_000);
@@ -64,6 +68,7 @@ You have been given one task. Work on it using the board tools:
 - If the task is big, split it with create_subtasks. Assign pieces to other agents (see list_agents) when their skills fit better, or leave them unassigned. Subtasks you keep for yourself will be given to you later as separate tasks; don't do them now.
 - After splitting, stop (reply without calling a tool). The task comes back to you when all its subtasks are done; then check and combine their results and call complete_task.
 - Talk to other agents with send_message. The user reads that chat too.
+- If another agent should finish the task (their skills fit better, or you're stuck), save your files and hand it over with hand_off and a note good enough to continue from cold.
 - The team notes are the team's shared memory. Check read_notes when earlier decisions may matter, and save decisions, conventions and results others will need with write_note.
 - You also have your own memory that carries over between tasks. Save what you learn about how your user wants things done, and lessons from mistakes, with remember (fix or drop old ones with forget). Before work that may have been done or decided before, use search_memory.
 - Before anything irreversible, anything that costs money, or anything that publishes or sends something outside, call request_approval and only proceed on 'allow'.
@@ -73,7 +78,8 @@ const NO_COMPUTER = `You have no file system and can't run code. Put the full de
 If the task needs code to be run, tested or built into files (a zip, a build), don't hand the user a script to run instead: say so in report_progress, tell them to turn on "Cloud computer" on your agent page in AgentsHUB and move the task back to Ready, and finish with complete_task.`;
 
 const COMPUTER = `You have your own cloud computer: a fresh Linux machine with Node.js, npm, Python and pip, and internet access. It exists only for this task and is deleted when the task ends.
-- Work in ${WORKDIR}. Use write_file to create files, run_command to install packages, run the code and run its tests, and read_file / list_files to look around. Files saved on this task before are already there.
+- Work in ${WORKDIR}. Use write_file to create files, run_command to install packages, run the code and run its tests, and read_file / list_files to look around. Files saved before are already there: the whole shared workspace for a project task, otherwise this task's files.
+- The folder is a git repository with those files committed, so \`git diff\` and \`git status\` show what you changed. Other agents may have changed shared files since you last saw them; check before overwriting.
 - Check your work by running it. Fix failures before you finish; say in your summary what you ran and what passed.
 - For a web app or page, you can start it with run_command (background=true) and share preview_url, but that link dies with the computer.
 - Save every file the user should get with save_artifact (pass its path) before complete_task. Anything not saved is lost.
@@ -161,9 +167,15 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
  * online, new top-level tasks nobody owns are left for the lead to plan.
  */
 export async function pickTask(agent: Pick<Agent, "id" | "role">): Promise<Task | null> {
-  const [tasks, agents] = await Promise.all([getTasks(), getAgents()]);
-  const done = new Set(tasks.filter((t) => t.column === "done" || t.column === "review").map((t) => t.id));
-  const openChildren = new Set(tasks.filter((t) => t.parentTaskId && !done.has(t.id)).map((t) => t.parentTaskId));
+  const [all, agents, projects] = await Promise.all([getTasks(), getAgents(), getProjects()]);
+  const done = new Set(all.filter((t) => t.column === "done" || t.column === "review").map((t) => t.id));
+  const openChildren = new Set(all.filter((t) => t.parentTaskId && !done.has(t.id)).map((t) => t.parentTaskId));
+  // Tasks of paused or finished projects wait, and project tasks go only to the project's members.
+  const projectOf = new Map(projects.map((p) => [p.id, p]));
+  const tasks = all.filter((t) => {
+    const p = t.projectId ? projectOf.get(t.projectId) : null;
+    return !p || (p.status === "active" && isProjectMember(p, agent.id));
+  });
   const unblocked = (t: Task) => t.dependsOn.every((d) => done.has(d)) && !openChildren.has(t.id);
   const byPriority = (a: Task, b: Task) => rank(b.priority) - rank(a.priority) || a.createdAt - b.createdAt;
   const leadOnline = agents.some((a) => a.id !== agent.id && a.role === "lead" && a.status !== "offline" && a.status !== "paused");
@@ -368,13 +380,17 @@ async function waitForDecision(agent: Agent, gate: GateResult): Promise<GateResu
  * first, cut to the brief's token budget (CONTEXT_BRIEF_TOKENS).
  */
 export async function brief(agent: Agent, task: Task, budget = BRIEF_TOKENS): Promise<string> {
-  const [all, agents, history, memories, notes] = await Promise.all([
+  const [all, agents, history, memories, notes, projects, handoff, files] = await Promise.all([
     getTasks(),
     getAgents(),
     getEvents({ taskId: task.id, limit: 20 }),
     getAgentMemories(agent.id),
     getNotes(),
+    getProjects(),
+    getLastHandoff(task.id),
+    getArtifacts(task.projectId ? { projectId: task.projectId, latestOnly: true, limit: 5_000 } : { taskId: task.id, latestOnly: true }),
   ]);
+  const project = task.projectId ? projects.find((p) => p.id === task.projectId) ?? null : null;
   const subtasks = all.filter((t) => t.parentTaskId === task.id);
   const results = await Promise.all(subtasks.map((s) => subtaskResult(s, agents)));
   const parent = task.parentTaskId ? all.find((t) => t.id === task.parentTaskId) : null;
@@ -400,7 +416,10 @@ export async function brief(agent: Agent, task: Task, budget = BRIEF_TOKENS): Pr
           .filter(Boolean)
           .join("\n\n"),
       },
+      { name: "the handoff note", cuttable: true, moreWith: "get_task", text: handoff && handoffLine(handoff, agents) },
+      { name: "the project", cuttable: true, moreWith: "list_projects", text: project && projectLine(project) },
       { name: "subtask results", cuttable: true, moreWith: "get_task", text: subtasks.length && `Subtasks:\n${results.join("\n")}` },
+      { name: "the file list", cuttable: true, moreWith: "get_task", text: files.length && filesLine(files, agents, Boolean(project)) },
       { name: "your memory", cuttable: true, moreWith: "search_memory", text: memoryLine(memories) },
       {
         name: "related memory",
@@ -432,6 +451,24 @@ export async function brief(agent: Agent, task: Task, budget = BRIEF_TOKENS): Pr
     ],
     budget,
   ).text;
+}
+
+function handoffLine(h: { fromAgentId: string | null; note: string }, agents: PublicAgent[]): string {
+  const from = agents.find((a) => a.id === h.fromAgentId)?.name ?? "another agent";
+  return `${from} handed this task to you. Their handoff note:\n${h.note}`;
+}
+
+function projectLine(p: Project): string {
+  return [`This task is part of the project "${p.name}" (${p.id}).`, p.goal && `Project goal:\n${p.goal}`, p.context && `Project requirements and decisions:\n${p.context}`]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function filesLine(files: ArtifactInfo[], agents: PublicAgent[], shared: boolean): string {
+  const name = (id: string | null) => agents.find((a) => a.id === id)?.name ?? (id ? "an agent" : "your user");
+  const rows = files.slice(0, 60).map((f) => `- ${f.path} (v${f.version}, ${f.sizeBytes} bytes, by ${name(f.agentId)})`);
+  const more = files.length > 60 ? `\n…and ${files.length - 60} more` : "";
+  return `${shared ? "Files in the project's shared workspace" : "Files saved on this task"} (read them with read_saved_file, or they're on your cloud computer):\n${rows.join("\n")}${more}`;
 }
 
 /** The agent's own memory: whole when short, otherwise the titles. */

@@ -70,3 +70,5 @@ export const ARTIFACT_STATUS_META = {
   approved: { label: "Approved", color: "#00c875", text: "#ffffff" },
   failed: { label: "Failed", color: "#e2445c", text: "#ffffff" },
 } as const;
+
+export const PROJECT_STATUS_LABELS: Record<"active" | "paused" | "done", string> = { active: "Active", paused: "Paused", done: "Done" };

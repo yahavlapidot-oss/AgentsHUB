@@ -11,6 +11,7 @@ export function Sidebar() {
 
   const items = [
     { href: "/", label: "Main board", icon: "▦" },
+    { href: "/projects", label: "Projects", icon: "◫" },
     { href: "/agents", label: "Agents", icon: "◉", badge: `${online}/${agents.length}` },
     { href: "/chat", label: "Agent chat", icon: "✉" },
     { href: "/notes", label: "Team notes", icon: "✎" },

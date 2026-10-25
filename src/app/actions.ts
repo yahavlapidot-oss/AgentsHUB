@@ -4,7 +4,7 @@ import { z } from "zod";
 import * as data from "@/lib/data";
 import { diffLines, toHunks } from "@/lib/diff";
 import { cleanDisabledTools } from "@/lib/tool-hub";
-import { AGENT_KINDS, AGENT_ROLES, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
+import { AGENT_KINDS, AGENT_ROLES, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROJECT_STATUSES, PROVIDERS } from "@/lib/schema";
 
 // Server actions used by the dashboard. The user is the actor (agentId null).
 
@@ -16,6 +16,7 @@ const NewTask = z.object({
   ownerAgentId: z.string().nullable().default(null),
   acceptanceCriteria: z.string().max(5_000).default(""),
   budgetUsd: z.number().min(0).nullable().default(null),
+  projectId: z.string().nullable().default(null),
 });
 
 export async function createTaskAction(input: z.input<typeof NewTask>) {
@@ -33,6 +34,7 @@ const Patch = z
     acceptanceCriteria: z.string().max(5_000),
     progressPct: z.number().min(0).max(100),
     budgetUsd: z.number().min(0).nullable(),
+    projectId: z.string().nullable(),
   })
   .partial();
 
@@ -118,6 +120,27 @@ export async function saveNoteAction(input: z.input<typeof NoteInput>) {
 
 export async function deleteNoteAction(noteId: string) {
   await data.deleteNote(noteId);
+}
+
+const ProjectInput = z.object({
+  name: z.string().trim().min(1, "Give the project a name").max(200),
+  goal: z.string().trim().max(5_000).default(""),
+  context: z.string().trim().max(20_000).default(""),
+  memberAgentIds: z.array(z.string()).max(100).default([]),
+  status: z.enum(PROJECT_STATUSES).default("active"),
+});
+
+export async function createProjectAction(input: z.input<typeof ProjectInput>) {
+  const project = await data.createProject(ProjectInput.parse(input));
+  return { id: project.id };
+}
+
+export async function updateProjectAction(projectId: string, input: z.input<typeof ProjectInput>) {
+  await data.updateProject(projectId, ProjectInput.parse(input));
+}
+
+export async function deleteProjectAction(projectId: string) {
+  await data.deleteProject(projectId);
 }
 
 const MemoryInput = z.object({

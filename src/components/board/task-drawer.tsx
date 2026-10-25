@@ -190,7 +190,7 @@ export function Activity({ events }: { events: AgentEvent[] }) {
 }
 
 function Details({ taskId }: { taskId: string }) {
-  const { tasks, refresh } = useLive();
+  const { tasks, projects, refresh } = useLive();
   const task = tasks.find((t) => t.id === taskId)!;
   const [description, setDescription] = useState(task.description);
   const [acceptance, setAcceptance] = useState(task.acceptanceCriteria);
@@ -221,6 +221,21 @@ function Details({ taskId }: { taskId: string }) {
         <button type="button" className="btn-primary" disabled={!dirty} onClick={save}>Save</button>
       </div>
       <dl className="card grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 p-4 text-sm">
+        <dt className="text-ink-faint">Project</dt>
+        <dd>
+          <select
+            aria-label="Project"
+            className="input py-1"
+            value={task.projectId ?? ""}
+            onChange={async (e) => {
+              await updateTaskAction(taskId, { projectId: e.target.value || null });
+              await refresh();
+            }}
+          >
+            <option value="">No project</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </dd>
         <dt className="text-ink-faint">Budget</dt>
         <dd>{task.budgetUsd != null ? usd(task.budgetUsd) : "No limit"}</dd>
         <dt className="text-ink-faint">Created by</dt>
