@@ -816,8 +816,16 @@ export async function saveArtifact(input: {
   const id = newId("art");
   // With a bucket configured the bytes go there first; the row only points at them.
   const store = getBlobStore();
-  const storageKey = store ? `artifacts/${input.taskId ?? "no-task"}/${id}` : null;
-  if (store && storageKey) await store.put(storageKey, input.content, mimeType);
+  let storageKey = store ? `artifacts/${input.taskId ?? "no-task"}/${id}` : null;
+  if (store && storageKey) {
+    try {
+      await store.put(storageKey, input.content, mimeType);
+    } catch (e) {
+      // A bucket problem shouldn't lose the agent's work: keep this file in the database.
+      console.error("[storage] upload failed, keeping the file in the database", e);
+      storageKey = null;
+    }
+  }
   const [row] = await db
     .insert(artifacts)
     .values({

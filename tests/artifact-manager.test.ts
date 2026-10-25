@@ -86,6 +86,22 @@ describe("bucket storage", () => {
     expect((await data.getArtifact(artifact.id))?.content.toString()).toBe("# Report");
   });
 
+  it("builds path-style and virtual-hosted object URLs", async () => {
+    const { objectUrl } = await import("../src/lib/storage");
+    expect(objectUrl("https://t3.storageapi.dev", "files-abc", "artifacts/t 1/a.md", "virtual")).toBe("https://files-abc.t3.storageapi.dev/artifacts/t%201/a.md");
+    expect(objectUrl("http://127.0.0.1:9000/", "files", "a/b", "path")).toBe("http://127.0.0.1:9000/files/a/b");
+  });
+
+  it("keeps a file in the database when the bucket upload fails", async () => {
+    const saved = process.env.ARTIFACT_S3_ENDPOINT;
+    process.env.ARTIFACT_S3_ENDPOINT = "http://127.0.0.1:1";
+    const task = await data.createTask({ title: "Bucket down" });
+    const { artifact } = await data.saveArtifact({ taskId: task.id, agentId: null, path: "kept.txt", content: Buffer.from("kept") });
+    process.env.ARTIFACT_S3_ENDPOINT = saved;
+    expect(artifact.storageKey).toBeNull();
+    expect((await data.getArtifact(artifact.id))?.content.toString()).toBe("kept");
+  });
+
   it("still reads files saved in the database before the switch", async () => {
     const task = await data.createTask({ title: "Old file" });
     const saved = process.env.ARTIFACT_S3_BUCKET;

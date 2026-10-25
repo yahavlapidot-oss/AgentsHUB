@@ -115,7 +115,7 @@ When a later run picks up the same task, the files saved on it are put back into
 
 Every save of a file adds a version. On the **Files** tab or page, open **older versions** and click **Changes since vN** to see the lines that changed from that version to the latest. When an agent finishes a task, its files move from *Draft* to *In review*, and the finish email lists them with links.
 
-The files' bytes live in the database by default, which is fine for small files. To keep them in an S3-compatible bucket instead (for example a [Railway bucket](https://docs.railway.com/storage-buckets), about $0.015 per GB a month), set `ARTIFACT_S3_BUCKET`, `ARTIFACT_S3_ENDPOINT`, `ARTIFACT_S3_ACCESS_KEY_ID`, `ARTIFACT_S3_SECRET_ACCESS_KEY` and optionally `ARTIFACT_S3_REGION`. In Railway you can set these as references to the bucket's own variables. The database then keeps only the metadata. Files saved before the switch stay readable.
+The files' bytes live in the database by default, which is fine for small files. To keep them in an S3-compatible bucket instead (for example a [Railway bucket](https://docs.railway.com/storage-buckets), about $0.015 per GB a month), set `ARTIFACT_S3_BUCKET`, `ARTIFACT_S3_ENDPOINT`, `ARTIFACT_S3_ACCESS_KEY_ID`, `ARTIFACT_S3_SECRET_ACCESS_KEY` and optionally `ARTIFACT_S3_REGION` and `ARTIFACT_S3_URL_STYLE` (`virtual` for new Railway buckets, `path` by default). In Railway you can set these as references to the bucket's own variables. The database then keeps only the metadata. Files saved before the switch stay readable. The server checks the bucket when it starts and logs the result; if an upload fails, that file is kept in the database instead, so no work is lost.
 
 ## Tools and what each agent may use
 
