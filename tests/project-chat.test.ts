@@ -101,7 +101,8 @@ describe("project chat with the work manager", () => {
     await actions.sendToLeadAction(project.id, { text: "How is it going?" });
     const all = await data.getMessages({ projectId: project.id });
     const agents = await data.getAgents();
-    const text = await runner.inboxBrief(manager, all.slice(-1), {
+    const full = (await data.getHostedAgents()).find((a) => a.id === manager.id)!;
+    const text = await runner.inboxBrief(full, all.slice(-1), {
       agents,
       mine: [],
       names: new Map(agents.map((a) => [a.id, a.name])),
