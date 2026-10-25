@@ -45,7 +45,11 @@ describe("bucket storage", () => {
       const chunks: Buffer[] = [];
       req.on("data", (c) => chunks.push(c));
       req.on("end", () => {
-        if (req.method === "PUT") {
+        if (req.method === "PUT" && req.headers["content-length"] === undefined) {
+          // Like Railway's bucket: a streamed upload without a length is refused.
+          res.statusCode = 411;
+          res.end("<Error><Code>MissingContentLength</Code><Message>You must provide the Content-Length HTTP header.</Message></Error>");
+        } else if (req.method === "PUT") {
           objects.set(req.url!, Buffer.concat(chunks));
           res.end();
         } else if (objects.has(req.url!)) {
@@ -84,6 +88,13 @@ describe("bucket storage", () => {
     expect(signed).toBeGreaterThan(0);
 
     expect((await data.getArtifact(artifact.id))?.content.toString()).toBe("# Report");
+  });
+
+  it("shortens S3 error replies", async () => {
+    const { shortError } = await import("../src/lib/storage");
+    expect(shortError('<?xml version="1.0"?><Error><Code>MissingContentLength</Code><Message>You must provide the Content-Length HTTP header.</Message><Key>a</Key></Error>')).toBe(
+      "MissingContentLength: You must provide the Content-Length HTTP header.",
+    );
   });
 
   it("builds path-style and virtual-hosted object URLs", async () => {
