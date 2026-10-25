@@ -3,8 +3,8 @@ import { contentTag, pollResponse } from "@/lib/etag";
 
 describe("live polling tags", () => {
   it("ignores generatedAt but follows the content", () => {
-    expect(contentTag({ generatedAt: 1, tasks: [1] } as never)).toBe(contentTag({ generatedAt: 2, tasks: [1] } as never));
-    expect(contentTag({ generatedAt: 1, tasks: [1] } as never)).not.toBe(contentTag({ generatedAt: 1, tasks: [2] } as never));
+    expect(contentTag({ generatedAt: 1, tasks: [1] })).toBe(contentTag({ generatedAt: 2, tasks: [1] }));
+    expect(contentTag({ generatedAt: 1, tasks: [1] })).not.toBe(contentTag({ generatedAt: 1, tasks: [2] }));
   });
 
   it("answers 304 with no body when the caller has the same content", async () => {
