@@ -43,6 +43,7 @@ import { MEMORY_SOURCES, searchMemory } from "./memory";
 import { boardLink, notifyByEmail } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
 import type { SandboxSession } from "./sandbox/session";
+import type { Taint } from "./untrusted";
 
 export type JsonSchema = {
   type: "object";
@@ -61,6 +62,10 @@ export type ToolContext = {
   projectId?: string | null;
   /** Hosted agents with a cloud computer. */
   sandbox?: SandboxSession;
+  /** Set once the run has read outside content; sending tools then ask first. */
+  taint?: Taint;
+  /** Where replies go when chatting outside a project, e.g. "hq" for the chief of staff's chat. */
+  chatChannel?: string | null;
 };
 
 export type AgentTool = {

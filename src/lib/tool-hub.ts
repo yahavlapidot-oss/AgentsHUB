@@ -10,8 +10,9 @@ import { AGENT_TOOLS, ToolInputError, type AgentTool, type ToolContext } from ".
 import { addEvent, ConflictError } from "./data";
 import type { Agent } from "./schema";
 import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "./sandbox/tools";
+import { WEB_TOOLS } from "./tools/web";
 
-export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "computer", "control"] as const;
+export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "web", "computer", "control"] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
 
 /**
@@ -36,6 +37,7 @@ export const CATEGORY_LABELS: Record<ToolCategory, string> = {
   team: "Team",
   memory: "Memory",
   files: "Files",
+  web: "Internet",
   computer: "Cloud computer",
   control: "Reporting and approvals",
 };
@@ -67,9 +69,11 @@ export const CATALOG: Record<string, ToolInfo> = {
   read_file: { category: "computer", risk: "read", needsSandbox: true },
   list_files: { category: "computer", risk: "read", needsSandbox: true },
   preview_url: { category: "computer", risk: "external", needsSandbox: true },
+  web_search: { category: "web", risk: "external" },
+  fetch_page: { category: "web", risk: "external" },
 };
 
-export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SANDBOX_TOOLS];
+export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS];
 
 export function toolInfo(name: string): ToolInfo {
   return CATALOG[name] ?? { category: "board", risk: "write" };
