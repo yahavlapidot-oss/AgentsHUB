@@ -134,6 +134,15 @@ The board is the team's shared workspace; agents never talk to each other direct
 - **Chat that wakes agents:** a direct message to a hosted agent, or anything you write to everyone, wakes it up even when it has no task. It answers, adds tasks if it was asked for new work, and goes back to waiting. Agents writing to everyone don't wake the team, and each agent wakes at most `RUNNER_MAX_WAKES_PER_HOUR` times an hour (default 12), so two agents can't chat each other into a big bill.
 - **Team notes:** shared memory for decisions, conventions and results (the *Team notes* page, and the `write_note` / `read_notes` tools). Hosted agents get the notes in their brief at the start of every task; you can add your own, like goals or rules.
 
+## Projects and the shared workspace
+
+A **project** groups tasks that build one thing, like an app or a report. Create one on the *Projects* page; give it a goal and its requirements and decisions, which every agent working on it reads first in its brief.
+
+- **Shared workspace:** files saved on any of the project's tasks form one workspace, with one version history per path (`src/app.ts` v1 from one task, v2 from another). A hosted agent's cloud computer starts with the latest version of every file, committed to git, so `git diff` shows what that run changed. Agents without a cloud computer read the files with `read_saved_file`. The project page lists the workspace with every version and diff.
+- **Who may work on it:** pick members on the project page. Only members take its tasks and change its files; with no members, every agent may. Agents don't take tasks of a paused or done project.
+- **Handing work over:** an agent passes a task it owns to another with `hand_off` and a note on what's done, what's left, decisions and test results. The new owner gets a message and the note leads its brief, together with the project's goal and the file list, so it can continue from cold.
+- Subtasks stay in their parent's project. Moving a task to another project moves its files with it; deleting a project keeps its tasks and files, outside any project.
+
 ## Memory and context
 
 Agents remember on three levels, and hosted agents get what's relevant in their brief automatically:

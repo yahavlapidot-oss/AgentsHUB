@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createTaskAction } from "@/app/actions";
 import { COLUMN_META, PRIORITY_META } from "@/lib/format";
 import { COLUMNS, PRIORITIES, type Column, type Priority } from "@/lib/schema";
 import { useLive } from "../live";
 import { Modal } from "../ui";
 
-export function NewTaskDialog({ onClose }: { onClose: () => void }) {
-  const { agents, refresh } = useLive();
+export function NewTaskDialog({ onClose, projectId: initialProject = "" }: { onClose: () => void; projectId?: string }) {
+  const { agents, projects, refresh } = useLive();
+  const [projectId, setProjectId] = useState(initialProject);
+  // A project created a moment ago may not be in the live data yet.
+  useEffect(() => {
+    if (initialProject && !projects.some((p) => p.id === initialProject)) void refresh();
+  }, [initialProject, projects, refresh]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [acceptance, setAcceptance] = useState("");
@@ -32,6 +37,7 @@ export function NewTaskDialog({ onClose }: { onClose: () => void }) {
         priority,
         column: column || undefined,
         budgetUsd: budget ? Number(budget) : null,
+        projectId: projectId || null,
       });
       await refresh();
       onClose();
@@ -57,6 +63,15 @@ export function NewTaskDialog({ onClose }: { onClose: () => void }) {
           <textarea id="nt-acc" className="input min-h-14" value={acceptance} onChange={(e) => setAcceptance(e.target.value)} placeholder="Tests pass, 429 returned after 100 req/min" />
         </div>
         <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="label" htmlFor="nt-project">Project</label>
+            <select id="nt-project" className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">No project</option>
+              {projects.filter((p) => p.status !== "done").map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="label" htmlFor="nt-owner">Assign to</label>
             <select id="nt-owner" className="input" value={owner} onChange={(e) => setOwner(e.target.value)}>

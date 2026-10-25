@@ -46,6 +46,9 @@ export const CATALOG: Record<string, ToolInfo> = {
   claim_task: { category: "board", risk: "write" },
   create_subtasks: { category: "board", risk: "write" },
   create_task: { category: "board", risk: "write" },
+  list_projects: { category: "board", risk: "read" },
+  hand_off: { category: "team", risk: "write" },
+  read_saved_file: { category: "files", risk: "read" },
   list_agents: { category: "team", risk: "read" },
   send_message: { category: "team", risk: "write" },
   check_inbox: { category: "team", risk: "read", core: true },
@@ -96,7 +99,7 @@ const MAX_SAME_CALL = Number(process.env.TOOL_MAX_SAME_CALL ?? 5);
 /** Tools that write their own activity line. */
 const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message", "save_artifact", ...SANDBOX_LOGGED_TOOLS]);
 /** Calls that are meant to repeat (polling). */
-const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes"]);
+const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes", "read_saved_file", "list_projects"]);
 
 /**
  * Runs one agent's tool calls for one run, the same way for every provider:

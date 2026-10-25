@@ -15,6 +15,7 @@ export const DECISIONS = ["pending", "approved", "denied"] as const;
 export const SANDBOX_STATUSES = ["starting", "running", "closed", "failed"] as const;
 export const ARTIFACT_KINDS = ["code", "document", "image", "pdf", "data", "website", "other"] as const;
 export const ARTIFACT_STATUSES = ["draft", "in_review", "approved", "failed"] as const;
+export const PROJECT_STATUSES = ["active", "paused", "done"] as const;
 
 export type Provider = (typeof PROVIDERS)[number];
 export type AgentRole = (typeof AGENT_ROLES)[number];
@@ -51,6 +52,24 @@ export const agents = sqliteTable("agents", {
   createdAt: integer("created_at").notNull(),
 });
 
+/**
+ * A project groups tasks, and its tasks share one workspace: the files any of
+ * them saved, which the next agent's cloud computer starts from. Its goal and
+ * requirements go into every brief. memberAgentIds limits who may take its
+ * tasks and change its files; empty means every agent.
+ */
+export const projects = sqliteTable("projects", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  goal: text("goal").notNull().default(""),
+  /** Requirements, constraints and decisions every agent on the project should know. */
+  context: text("context").notNull().default(""),
+  memberAgentIds: text("member_agent_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+  status: text("status", { enum: PROJECT_STATUSES }).notNull().default("active"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export const tasks = sqliteTable(
   "tasks",
   {
@@ -61,6 +80,7 @@ export const tasks = sqliteTable(
     priority: text("priority", { enum: PRIORITIES }).notNull().default("medium"),
     ownerAgentId: text("owner_agent_id"),
     parentTaskId: text("parent_task_id"),
+    projectId: text("project_id"),
     dependsOn: text("depends_on", { mode: "json" }).$type<string[]>().notNull().default([]),
     acceptanceCriteria: text("acceptance_criteria").notNull().default(""),
     progressPct: integer("progress_pct").notNull().default(0),
@@ -69,7 +89,7 @@ export const tasks = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("tasks_column_idx").on(t.column), index("tasks_owner_idx").on(t.ownerAgentId)],
+  (t) => [index("tasks_column_idx").on(t.column), index("tasks_owner_idx").on(t.ownerAgentId), index("tasks_project_idx").on(t.projectId)],
 );
 
 export const runs = sqliteTable(
@@ -202,6 +222,8 @@ export const artifacts = sqliteTable(
   {
     id: text("id").primaryKey(),
     taskId: text("task_id"),
+    /** Set from the task's project: files of a project form its shared workspace, versioned per path. */
+    projectId: text("project_id"),
     agentId: text("agent_id"),
     runId: text("run_id"),
     sandboxId: text("sandbox_id"),
@@ -219,11 +241,12 @@ export const artifacts = sqliteTable(
     storageKey: text("storage_key"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("artifacts_task_idx").on(t.taskId), uniqueIndex("artifacts_task_path_version").on(t.taskId, t.path, t.version)],
+  (t) => [index("artifacts_task_idx").on(t.taskId), index("artifacts_project_idx").on(t.projectId), uniqueIndex("artifacts_task_path_version").on(t.taskId, t.path, t.version)],
 );
 
 export type Agent = typeof agents.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
+export type Project = typeof projects.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type AgentEvent = typeof events.$inferSelect;
 export type Message = typeof messages.$inferSelect;

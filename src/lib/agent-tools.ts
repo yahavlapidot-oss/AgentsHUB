@@ -15,6 +15,13 @@ import {
   createTask,
   forgetAgentMemory,
   getAgentMemories,
+  getArtifact,
+  getLastHandoff,
+  getProject,
+  getProjects,
+  handOffTask,
+  isProjectMember,
+  normalizeArtifactPath,
   getAgents,
   getArtifacts,
   getEvents,
@@ -91,9 +98,21 @@ const compactTask = (t: Awaited<ReturnType<typeof getTasks>>[number]) => ({
   priority: t.priority,
   ownerAgentId: t.ownerAgentId,
   parentTaskId: t.parentTaskId,
+  projectId: t.projectId,
   dependsOn: t.dependsOn,
   progressPct: t.progressPct,
 });
+
+const fileInfo = (a: { path: string; version: number; sizeBytes: number; agentId: string | null; taskId: string | null; createdAt: number }) => ({
+  path: a.path,
+  version: a.version,
+  sizeBytes: a.sizeBytes,
+  savedBy: a.agentId ?? "user",
+  taskId: a.taskId,
+  savedAt: a.createdAt,
+});
+
+const isText = (mime: string) => mime.startsWith("text/") || /json|javascript|typescript|xml|yaml|svg|csv|markdown/.test(mime);
 
 export const AGENT_TOOLS: AgentTool[] = [
   tool({
@@ -105,31 +124,46 @@ export const AGENT_TOOLS: AgentTool[] = [
       properties: {
         column: { type: "string", enum: [...COLUMNS], description: "Only tasks in this column" },
         mine: { type: "boolean", description: "Only tasks you own" },
+        projectId: str("Only tasks in this project (optional)"),
       },
     },
-    args: z.object({ column: z.enum(COLUMNS).optional(), mine: z.boolean().optional() }),
-    run: async ({ column, mine }, { agent }) => {
+    args: z.object({ column: z.enum(COLUMNS).optional(), mine: z.boolean().optional(), projectId: z.string().optional() }),
+    run: async ({ column, mine, projectId }, { agent }) => {
       const all = await getTasks();
-      const tasks = all.filter((t) => (!mine || t.ownerAgentId === agent.id) && (!column || t.column === column));
+      const tasks = all.filter(
+        (t) => (!mine || t.ownerAgentId === agent.id) && (!column || t.column === column) && (!projectId || t.projectId === projectId),
+      );
       return { tasks: tasks.slice(0, 100).map(compactTask) };
     },
   }),
 
   tool({
     name: "get_task",
-    description: "Full details of one task: description, acceptance criteria, recent activity and chat.",
+    description:
+      "Full details of one task: description, acceptance criteria, its project (goal, requirements, shared files), the last handoff note, recent activity and chat.",
     inputSchema: { type: "object", properties: { taskId: str("Task id") }, required: ["taskId"] },
     args: z.object({ taskId: z.string() }),
     run: async ({ taskId }) => {
       const task = await getTask(taskId);
       if (!task) throw new ToolInputError(`No task ${taskId}`);
-      const [activity, chat, all] = await Promise.all([
+      const [activity, chat, all, project, handoff, files] = await Promise.all([
         getEvents({ taskId, limit: 30 }),
         getMessages({ taskId, limit: 30 }),
         getTasks(),
+        task.projectId ? getProject(task.projectId) : null,
+        getLastHandoff(taskId),
+        getArtifacts(task.projectId ? { projectId: task.projectId, latestOnly: true, limit: 5_000 } : { taskId, latestOnly: true }),
       ]);
       const subtasks = all.filter((t) => t.parentTaskId === taskId).map(compactTask);
-      return { task, subtasks, activity, chat };
+      return {
+        task,
+        project: project && { id: project.id, name: project.name, goal: project.goal, context: project.context },
+        handoff,
+        files: files.map(fileInfo),
+        subtasks,
+        activity,
+        chat,
+      };
     },
   }),
 
@@ -252,6 +286,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         acceptanceCriteria: str("How we know it's done"),
         ownerAgentId: str("Agent to assign, from list_agents (optional)"),
         priority: { type: "string", enum: [...PRIORITIES] },
+        projectId: str("Project to put it in, from list_projects (optional)"),
       },
       required: ["title"],
     },
@@ -261,9 +296,16 @@ export const AGENT_TOOLS: AgentTool[] = [
       acceptanceCriteria: z.string().max(5_000).optional(),
       ownerAgentId: z.string().optional(),
       priority: z.enum(PRIORITIES).optional(),
+      projectId: z.string().optional(),
     }),
     run: async (input, { agent }) => {
-      const task = await createTask({ ...input, ownerAgentId: input.ownerAgentId || null, column: "ready", createdBy: agent.id });
+      const task = await createTask({
+        ...input,
+        ownerAgentId: input.ownerAgentId || null,
+        projectId: input.projectId || null,
+        column: "ready",
+        createdBy: agent.id,
+      });
       return { task: compactTask(task) };
     },
   }),
@@ -298,6 +340,79 @@ export const AGENT_TOOLS: AgentTool[] = [
       return {
         notes: notes.slice(0, 50).map((n) => ({ title: n.title, text: n.text, author: n.authorAgentId ?? "user", updatedAt: n.updatedAt })),
       };
+    },
+  }),
+
+  tool({
+    name: "list_projects",
+    description: "The projects on the board: goal, requirements, who may work on them, and how many open tasks and shared files each has.",
+    inputSchema: { type: "object", properties: {} },
+    args: z.object({}).passthrough(),
+    run: async (_args, { agent }) => {
+      const [projects, tasks] = await Promise.all([getProjects(), getTasks()]);
+      return {
+        projects: await Promise.all(
+          projects.map(async (p) => ({
+            id: p.id,
+            name: p.name,
+            status: p.status,
+            goal: p.goal,
+            context: p.context,
+            members: p.memberAgentIds.length ? p.memberAgentIds : "everyone",
+            youCanWork: isProjectMember(p, agent.id),
+            openTasks: tasks.filter((t) => t.projectId === p.id && t.column !== "done").length,
+            files: (await getArtifacts({ projectId: p.id, latestOnly: true, limit: 5_000 })).length,
+          })),
+        ),
+      };
+    },
+  }),
+
+  tool({
+    name: "hand_off",
+    description:
+      "Pass a task you own to another agent, when its skills fit the rest better or you can't continue. Write a handoff note so they can pick it up cold: what's done, what's left, decisions made, which files matter, and test results. The task goes back to Ready for them. Save your files with save_artifact first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: str("The task"),
+        toAgentId: str("Who takes over, from list_agents"),
+        note: str("The handoff note"),
+      },
+      required: ["taskId", "toAgentId", "note"],
+    },
+    args: z.object({ taskId: z.string(), toAgentId: z.string(), note: z.string().trim().min(20, "Write a real handoff note").max(10_000) }),
+    run: async ({ taskId, toAgentId, note }, { agent }) => {
+      const task = await handOffTask({ fromAgentId: agent.id, taskId, toAgentId, note });
+      return { task: compactTask(task), handedTo: toAgentId };
+    },
+  }),
+
+  tool({
+    name: "read_saved_file",
+    description:
+      "Read a text file saved on a task or in a project's shared workspace (the latest version). Use get_task to see which files exist.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: str("The file's path, e.g. src/app.ts"),
+        taskId: str("A task whose files (or whose project's files) to look in"),
+      },
+      required: ["path", "taskId"],
+    },
+    args: z.object({ path: z.string().min(1), taskId: z.string() }),
+    run: async ({ path, taskId }) => {
+      const task = await getTask(taskId);
+      if (!task) throw new ToolInputError(`No task ${taskId}`);
+      const files = await getArtifacts(task.projectId ? { projectId: task.projectId, latestOnly: true, limit: 5_000 } : { taskId, latestOnly: true });
+      const wanted = normalizeArtifactPath(path);
+      const info = files.find((f) => f.path === wanted);
+      if (!info) throw new ToolInputError(`No saved file ${wanted}. Saved: ${files.map((f) => f.path).slice(0, 50).join(", ") || "none"}`);
+      const full = await getArtifact(info.id);
+      if (!full) throw new ToolInputError(`No saved file ${wanted}`);
+      if (!isText(full.mimeType)) return { ...fileInfo(info), content: null, note: "Not a text file" };
+      const text = full.content.toString("utf8");
+      return { ...fileInfo(info), content: text.slice(0, 50_000), ...(text.length > 50_000 ? { cut: true } : {}) };
     },
   }),
 

@@ -127,7 +127,10 @@ describe("coder agent with a cloud computer", () => {
     // One machine, opened on first use; the throwaway "rm -rf" ran without asking.
     expect(provider.machines).toHaveLength(1);
     const machine = provider.machines[0];
-    expect(machine.commands).toEqual(["mkdir -p /home/user/work", "node hello.js", "rm -rf build"]);
+    expect(machine.commands[0]).toBe("mkdir -p /home/user/work");
+    // The saved state is committed to git, so the agent can diff its own changes.
+    expect(machine.commands[1]).toMatch(/^git init -q .* git commit /);
+    expect(machine.commands.slice(2)).toEqual(["node hello.js", "rm -rf build"]);
     expect(machine.closed).toBe(true);
 
     const [art] = await data.getArtifacts({ taskId: task.id });
@@ -151,6 +154,23 @@ describe("coder agent with a cloud computer", () => {
     await runner.runTask(await hosted(agent.id), task);
     const machine = provider.machines[0];
     expect(new TextDecoder().decode(machine.files.get("/home/user/work/app/index.html"))).toBe("<h1>v1</h1>");
+  });
+
+  it("starts a project task from the project's shared workspace, saved by other tasks and agents", async () => {
+    const project = await data.createProject({ name: "Portal" });
+    const { agent: first } = await data.createAgent({ name: "First", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted" });
+    const { agent: next } = await data.createAgent({ name: "Next", provider: "anthropic", model: "claude-sonnet-5-5", kind: "hosted", sandboxEnabled: true });
+    const earlier = await data.createTask({ title: "Scaffold", projectId: project.id });
+    await data.saveArtifact({ taskId: earlier.id, agentId: first.id, path: "src/app.ts", content: Buffer.from("v1") });
+    await data.saveArtifact({ taskId: earlier.id, agentId: first.id, path: "src/app.ts", content: Buffer.from("v2") });
+    const task = await data.createTask({ title: "Add login", projectId: project.id, ownerAgentId: next.id, column: "ready" });
+    script.push(
+      { calls: [{ name: "list_files", args: {} }] },
+      { calls: [{ name: "complete_task", args: { taskId: task.id, summary: "done" } }] },
+    );
+    await runner.runTask(await hosted(next.id), task);
+    const machine = provider.machines[0];
+    expect(new TextDecoder().decode(machine.files.get("/home/user/work/src/app.ts"))).toBe("v2");
   });
 
   it("doesn't open a sandbox for a run that never uses one, and hides the tools when it's off", async () => {

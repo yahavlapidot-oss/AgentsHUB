@@ -19,6 +19,7 @@ import {
   events,
   messages,
   notes,
+  projects,
   runs,
   sandboxes,
   tasks,
@@ -36,6 +37,7 @@ import {
   type Message,
   type Note,
   type Priority,
+  type Project,
   type Provider,
   type PublicAgent,
   type Run,
@@ -139,19 +141,21 @@ export type Snapshot = {
   events: AgentEvent[];
   messages: Message[];
   approvals: Approval[];
+  projects: Project[];
   generatedAt: number;
 };
 
 /** Everything the live board needs in one round trip. */
 export async function getSnapshot(): Promise<Snapshot> {
-  const [a, t, e, m, ap] = await Promise.all([
+  const [a, t, e, m, ap, p] = await Promise.all([
     getAgents(),
     getTasks(),
     getEvents({ limit: 60 }),
     getMessages({ limit: 100 }),
     getApprovals({ pendingOnly: true }),
+    getProjects(),
   ]);
-  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, generatedAt: Date.now() };
+  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, generatedAt: Date.now() };
 }
 
 export type UsageRow = { key: string; runs: number; tokensIn: number; tokensOut: number; costUsd: number };
@@ -266,8 +270,13 @@ export async function createTask(input: {
   acceptanceCriteria?: string;
   budgetUsd?: number | null;
   createdBy?: string;
+  projectId?: string | null;
 }): Promise<Task> {
   const now = Date.now();
+  // Subtasks stay in their parent's project.
+  let projectId = input.projectId;
+  if (projectId === undefined && input.parentTaskId) projectId = (await getTask(input.parentTaskId))?.projectId ?? null;
+  if (projectId && !(await getProject(projectId))) throw new ConflictError(`No project ${projectId}`);
   const [row] = await db
     .insert(tasks)
     .values({
@@ -278,6 +287,7 @@ export async function createTask(input: {
       priority: input.priority ?? "medium",
       ownerAgentId: input.ownerAgentId ?? null,
       parentTaskId: input.parentTaskId ?? null,
+      projectId: projectId ?? null,
       dependsOn: input.dependsOn ?? [],
       acceptanceCriteria: input.acceptanceCriteria ?? "",
       budgetUsd: input.budgetUsd ?? null,
@@ -292,7 +302,7 @@ export async function createTask(input: {
 export type TaskPatch = Partial<
   Pick<
     Task,
-    "title" | "description" | "column" | "priority" | "ownerAgentId" | "acceptanceCriteria" | "progressPct" | "budgetUsd"
+    "title" | "description" | "column" | "priority" | "ownerAgentId" | "acceptanceCriteria" | "progressPct" | "budgetUsd" | "projectId"
   >
 >;
 
@@ -322,6 +332,10 @@ export async function updateTask(
       payload: { from: before.column, to: patch.column },
     });
   }
+  if (patch.projectId !== undefined && patch.projectId !== before.projectId) {
+    // The task's files move with it into the other project's workspace.
+    await db.update(artifacts).set({ projectId: patch.projectId }).where(eq(artifacts.taskId, taskId));
+  }
   if (patch.ownerAgentId !== undefined && patch.ownerAgentId !== before.ownerAgentId) {
     await addEvent({
       agentId: actor.agentId,
@@ -340,6 +354,7 @@ export async function claimTask(agentId: string, taskId: string): Promise<Task |
   if (task.ownerAgentId && task.ownerAgentId !== agentId) {
     throw new ConflictError("Task is already owned by another agent");
   }
+  await assertProjectMember(task.projectId, agentId);
   const updated = await updateTask(taskId, { ownerAgentId: agentId, column: "in_progress" }, { agentId });
   await heartbeat(agentId, { status: "active", currentTaskId: taskId });
   return updated;
@@ -767,6 +782,112 @@ export async function getSandboxes(opts: { taskId?: string; limit?: number } = {
     .limit(opts.limit ?? 50);
 }
 
+// ---------------------------------------------------------------- projects
+
+export async function getProjects(): Promise<Project[]> {
+  return db.select().from(projects).orderBy(desc(projects.updatedAt));
+}
+
+export async function getProject(id: string): Promise<Project | null> {
+  const [row] = await db.select().from(projects).where(eq(projects.id, id));
+  return row ?? null;
+}
+
+export type ProjectInput = { name: string; goal?: string; context?: string; memberAgentIds?: string[]; status?: Project["status"] };
+
+export async function createProject(input: ProjectInput): Promise<Project> {
+  const now = Date.now();
+  const [row] = await db
+    .insert(projects)
+    .values({
+      id: newId("proj"),
+      name: input.name,
+      goal: input.goal ?? "",
+      context: input.context ?? "",
+      memberAgentIds: [...new Set(input.memberAgentIds ?? [])],
+      status: input.status ?? "active",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  return row;
+}
+
+export async function updateProject(id: string, patch: Partial<ProjectInput>): Promise<Project | null> {
+  const set = { ...patch, ...(patch.memberAgentIds ? { memberAgentIds: [...new Set(patch.memberAgentIds)] } : {}), updatedAt: Date.now() };
+  const [row] = await db.update(projects).set(set).where(eq(projects.id, id)).returning();
+  return row ?? null;
+}
+
+/** The tasks and files stay; they just no longer belong to a project. */
+export async function deleteProject(id: string): Promise<void> {
+  await db.update(tasks).set({ projectId: null }).where(eq(tasks.projectId, id));
+  await db.update(artifacts).set({ projectId: null }).where(eq(artifacts.projectId, id));
+  await db.delete(projects).where(eq(projects.id, id));
+}
+
+/** Model and cloud computer spend per project, over all runs on its tasks. */
+export async function getProjectCosts(): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ projectId: tasks.projectId, cost: sql<number>`coalesce(sum(${runs.costUsd}), 0)` })
+    .from(runs)
+    .innerJoin(tasks, eq(runs.taskId, tasks.id))
+    .groupBy(tasks.projectId);
+  return new Map(rows.filter((r) => r.projectId).map((r) => [r.projectId!, Number(r.cost)]));
+}
+
+/** A project without members is open to every agent. */
+export function isProjectMember(project: Pick<Project, "memberAgentIds"> | null, agentId: string): boolean {
+  return !project || !project.memberAgentIds.length || project.memberAgentIds.includes(agentId);
+}
+
+async function assertProjectMember(projectId: string | null, agentId: string | null): Promise<void> {
+  if (!projectId || !agentId) return;
+  const project = await getProject(projectId);
+  if (!isProjectMember(project, agentId)) {
+    throw new ConflictError(`Only members of the project "${project!.name}" can work on its tasks and files`);
+  }
+}
+
+/**
+ * The owner passes a task to another agent with a handoff note: what's done,
+ * what's next, test results. The task goes back to Ready for the new owner, and
+ * the note leads its brief.
+ */
+export async function handOffTask(input: { fromAgentId: string; taskId: string; toAgentId: string; note: string }): Promise<Task> {
+  const task = await getTask(input.taskId);
+  if (!task) throw new ConflictError(`No task ${input.taskId}`);
+  if (task.ownerAgentId !== input.fromAgentId) throw new ConflictError("Only the task's owner can hand it off");
+  if (input.toAgentId === input.fromAgentId) throw new ConflictError("Hand it to another agent");
+  const to = await getAgent(input.toAgentId);
+  if (!to) throw new ConflictError(`No agent ${input.toAgentId}`);
+  await assertProjectMember(task.projectId, to.id);
+  await addEvent({
+    agentId: input.fromAgentId,
+    taskId: task.id,
+    type: "status_change",
+    payload: { text: `Handed off to ${to.name}`, handoff: { to: to.id, note: input.note } },
+  });
+  await postMessage({ fromAgentId: input.fromAgentId, toAgentId: to.id, taskId: task.id, text: `I handed "${task.title}" (${task.id}) to you.\n\n${input.note}` });
+  const updated = await updateTask(task.id, { ownerAgentId: to.id, column: "ready" }, { agentId: input.fromAgentId });
+  return updated!;
+}
+
+/** The newest handoff note on a task, if any. */
+export async function getLastHandoff(taskId: string): Promise<{ fromAgentId: string | null; note: string; at: number } | null> {
+  const rows = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.taskId, taskId), eq(events.type, "status_change")))
+    .orderBy(desc(events.at))
+    .limit(50);
+  for (const e of rows) {
+    const h = (e.payload as { handoff?: { note?: unknown } }).handoff;
+    if (h && typeof h.note === "string") return { fromAgentId: e.agentId, note: h.note, at: e.at };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- artifacts
 
 /** Largest single file an agent can save, and the most one task can hold across all versions. */
@@ -793,11 +914,14 @@ export async function saveArtifact(input: {
   }
   const path = normalizeArtifactPath(input.path);
   const sha256 = createHash("sha256").update(input.content).digest("hex");
-  const sameTask = input.taskId ? eq(artifacts.taskId, input.taskId) : isNull(artifacts.taskId);
+  const projectId = input.taskId ? ((await getTask(input.taskId))?.projectId ?? null) : null;
+  await assertProjectMember(projectId, input.agentId);
+  // In a project, versions run across all its tasks: the workspace has one history per path.
+  const scope = projectId ? eq(artifacts.projectId, projectId) : input.taskId ? eq(artifacts.taskId, input.taskId) : isNull(artifacts.taskId);
   const [latest] = await db
     .select(artifactInfoColumns)
     .from(artifacts)
-    .where(and(sameTask, eq(artifacts.path, path)))
+    .where(and(scope, eq(artifacts.path, path)))
     .orderBy(desc(artifacts.version))
     .limit(1);
   if (latest && latest.sha256 === sha256) return { artifact: latest, unchanged: true };
@@ -831,6 +955,7 @@ export async function saveArtifact(input: {
     .values({
       id,
       taskId: input.taskId,
+      projectId,
       agentId: input.agentId,
       runId: input.runId ?? null,
       sandboxId: input.sandboxId ?? null,
@@ -856,18 +981,23 @@ export async function saveArtifact(input: {
   return { artifact: row, unchanged: false };
 }
 
-/** Every version, newest first. `latestOnly` keeps one row per task and path. */
-export async function getArtifacts(opts: { taskId?: string; latestOnly?: boolean; limit?: number } = {}): Promise<ArtifactInfo[]> {
+/**
+ * Every version, newest first. `latestOnly` keeps one row per path: per project
+ * for project files (the workspace), per task otherwise.
+ */
+export async function getArtifacts(
+  opts: { taskId?: string; projectId?: string; latestOnly?: boolean; limit?: number } = {},
+): Promise<ArtifactInfo[]> {
   const rows = await db
     .select(artifactInfoColumns)
     .from(artifacts)
-    .where(opts.taskId ? eq(artifacts.taskId, opts.taskId) : undefined)
+    .where(and(opts.taskId ? eq(artifacts.taskId, opts.taskId) : undefined, opts.projectId ? eq(artifacts.projectId, opts.projectId) : undefined))
     .orderBy(desc(artifacts.createdAt), desc(artifacts.version))
     .limit(opts.limit ?? 500);
   if (!opts.latestOnly) return rows;
   const seen = new Set<string>();
   return rows.filter((a) => {
-    const key = `${a.taskId}\u0000${a.path}`;
+    const key = `${a.projectId ? `p:${a.projectId}` : `t:${a.taskId}`}\u0000${a.path}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
