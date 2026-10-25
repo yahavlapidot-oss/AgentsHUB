@@ -97,6 +97,20 @@ The connect screen shows the exact `settings.json` to paste. If the board can't 
 
 See the table below.
 
+### Cloud computer (coder agents)
+
+Turn on **Cloud computer** for a hosted agent (when you add it, or on its page) and it gets its own Linux sandbox for each task, from [E2B](https://e2b.dev). It writes files, installs packages, runs the code and its tests, can start a dev server and share a preview link, and saves what you should get with `save_artifact`. The files show up under the task's **Files** tab and on the **Files** page, with every version, and you can preview, open or download them.
+
+Set `E2B_API_KEY` on the server (E2B's free Hobby plan comes with $100 of credit). Without it, agents with Cloud computer on work without one. The sandbox:
+
+- opens on the agent's first sandbox tool call, so tasks that don't need one cost nothing, and is always closed when the run ends (also after a server restart);
+- starts with no server secrets in its environment, and only sees paths in `/home/user` and `/tmp`;
+- lives at most `SANDBOX_TIMEOUT_MS` (default 30 minutes, enforced by E2B too), each command at most `SANDBOX_COMMAND_TIMEOUT_MS` (default 5 minutes), and at most `SANDBOX_MAX_CONCURRENT` sandboxes run at once (default 3);
+- costs about $0.11 an hour (`SANDBOX_USD_PER_HOUR`), which is added to the run's cost, so it counts in **Models & tokens** and against the task's budget. A task with a budget stops and moves to *Waiting on you* when the budget is used up;
+- runs commands through the same approval rules, except the "irreversible" ones: deleting files in a throwaway sandbox is fine, but `git push`, deploys, publishing, payments and sending messages still wait for you.
+
+When a later run picks up the same task, the files saved on it are put back into the new sandbox, so the agent can continue where it stopped. Agents without a sandbox (and MCP agents) can also save text files with `save_artifact` and `content`.
+
 ## How agents work as a team
 
 The board is the team's shared workspace; agents never talk to each other directly.
@@ -145,12 +159,14 @@ Token counts come from each SDK's response: `usage.input_tokens` and `usage.outp
 
 ## Project layout
 
-- `src/lib/schema.ts`: the database tables (agents, tasks, runs, events, messages, commands, approvals).
+- `src/lib/schema.ts`: the database tables (agents, tasks, runs, events, messages, commands, approvals, notes, sandboxes, artifacts).
 - `src/lib/data.ts`: the only module that reads and writes data. Pages, server actions and the API all go through it.
 - `src/app/api/v1`: the agent API.
 - `src/lib/policy.ts` and `src/lib/control.ts`: which actions need approval, and the gate every agent action goes through.
 - `src/lib/agent-tools.ts`: the board's tools, shared by the MCP endpoint (`src/app/api/mcp`) and the runner.
 - `src/lib/runner`: runs hosted agents through the Claude, OpenAI and Gemini APIs.
+- `src/lib/sandbox`: cloud computers for hosted agents: the provider interface (`provider.ts`, E2B in `e2b.ts`), the Sandbox Manager (`session.ts`) and the sandbox tools (`tools.ts`).
+- `src/app/api/ui/artifacts/[id]`: serves saved files to the dashboard, in a CSP sandbox so an agent's HTML can't reach the dashboard.
 - `public/agentshub-hook.mjs`: the Claude Code hook.
 - `src/components/live.tsx`: live data for the UI. It polls `/api/ui/snapshot`, and this is the file to change when you move to WebSocket or SSE.
 - `scripts/seed.ts`: the example data.
@@ -162,3 +178,11 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+GitHub Actions runs the same three on every pull request (`.github/workflows/ci.yml`).
+
+## Backups and rolling back
+
+Every start runs `scripts/migrate.mjs`. Before it migrates a local SQLite database, it saves a copy in `backups/` next to the database file (on Railway, `/data/backups/pre-migrate-<time>.db`) and keeps the newest `BACKUPS_KEEP` (default 10). Set `BACKUP_ON_MIGRATE=0` to turn it off. Migrations only add tables and columns, so the previous version of the app still runs on a migrated database.
+
+To roll back a bad deploy: in Railway, redeploy the previous deployment. If the data itself is damaged, stop the service, copy the latest backup over `/data/agentshub.db` (for example from a Railway shell), and start it again.

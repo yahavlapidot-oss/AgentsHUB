@@ -10,6 +10,7 @@ import { z } from "zod";
 import { gateAction, type GateResult } from "./control";
 import {
   addEvent,
+  ArtifactError,
   claimTask,
   createTask,
   getAgents,
@@ -22,11 +23,13 @@ import {
   heartbeat,
   postMessage,
   reportProgress,
+  saveArtifact,
   takePendingCommands,
   writeNote,
 } from "./data";
 import { boardLink, notifyByEmail } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
+import type { SandboxSession } from "./sandbox/session";
 
 export type JsonSchema = {
   type: "object";
@@ -38,6 +41,11 @@ export type ToolContext = {
   agent: Pick<Agent, "id" | "name">;
   /** Hosted agents wait for the user's decision inside request_approval; MCP clients poll. */
   waitForApproval?: (gate: GateResult) => Promise<GateResult>;
+  /** Hosted runs: the task and run being worked on. */
+  taskId?: string | null;
+  runId?: string | null;
+  /** Hosted agents with a cloud computer. */
+  sandbox?: SandboxSession;
 };
 
 export type AgentTool = {
@@ -47,7 +55,7 @@ export type AgentTool = {
   run: (args: unknown, ctx: ToolContext) => Promise<unknown>;
 };
 
-function tool<S extends z.ZodTypeAny>(def: {
+export function tool<S extends z.ZodTypeAny>(def: {
   name: string;
   description: string;
   inputSchema: JsonSchema;
@@ -68,7 +76,7 @@ function tool<S extends z.ZodTypeAny>(def: {
 
 export class ToolInputError extends Error {}
 
-const str = (description: string) => ({ type: "string", description });
+export const str = (description: string) => ({ type: "string", description });
 
 const compactTask = (t: Awaited<ReturnType<typeof getTasks>>[number]) => ({
   id: t.id,
@@ -328,6 +336,62 @@ export const AGENT_TOOLS: AgentTool[] = [
   }),
 
   tool({
+    name: "save_artifact",
+    description:
+      "Save a deliverable file (code, a document, a page, data) so the user can open and download it from the task. With a cloud computer, pass the file's path there; otherwise pass the file's text in content. Saving the same name again adds a new version. Save every file the user should get before complete_task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: str("File in your cloud computer, relative to the work folder (e.g. 'app/index.html')"),
+        content: str("The file's text, when you have no cloud computer"),
+        name: str("File name to save it as (defaults to path), e.g. 'report.md'"),
+        note: str("One line on what this file is"),
+        taskId: str("Task id (defaults to your current task)"),
+      },
+    },
+    args: z.object({
+      path: z.string().max(500).optional(),
+      content: z.string().max(5_000_000).optional(),
+      name: z.string().max(300).optional(),
+      note: z.string().max(1_000).optional(),
+      taskId: z.string().optional(),
+    }),
+    run: async ({ path, content, name, note, taskId }, ctx) => {
+      const task = taskId || ctx.taskId;
+      if (!task) throw new ToolInputError("Pass taskId");
+      if (!(await getTask(task))) throw new ToolInputError(`No task ${task}`);
+      let bytes: Buffer;
+      if (path) {
+        if (!ctx.sandbox) throw new ToolInputError("You have no cloud computer; pass the file's text in content");
+        bytes = Buffer.from(await ctx.sandbox.readFile(path).catch((e) => Promise.reject(new ToolInputError(`Can't read ${path}: ${(e as Error).message}`))));
+      } else if (content !== undefined) {
+        bytes = Buffer.from(content, "utf8");
+      } else {
+        throw new ToolInputError("Pass path or content");
+      }
+      try {
+        const { artifact, unchanged } = await saveArtifact({
+          taskId: task,
+          agentId: ctx.agent.id,
+          runId: ctx.runId ?? null,
+          sandboxId: ctx.sandbox?.id ?? null,
+          path: name || path || "",
+          content: bytes,
+          note,
+        });
+        return {
+          artifact: { id: artifact.id, path: artifact.path, version: artifact.version, sizeBytes: artifact.sizeBytes, kind: artifact.kind },
+          unchanged: unchanged || undefined,
+          link: boardLink(`/api/ui/artifacts/${artifact.id}`),
+        };
+      } catch (e) {
+        if (e instanceof ArtifactError) throw new ToolInputError(e.message);
+        throw e;
+      }
+    },
+  }),
+
+  tool({
     name: "send_message",
     description:
       "Write in the agents' chat. Set toAgentId for a direct message, or leave it empty to write to everyone. Set taskId when it's about a task. The user reads this chat.",
@@ -406,8 +470,8 @@ export const AGENT_TOOLS: AgentTool[] = [
   }),
 ];
 
-export function findTool(name: string): AgentTool | undefined {
-  return AGENT_TOOLS.find((t) => t.name === name);
+export function findTool(name: string, tools: AgentTool[] = AGENT_TOOLS): AgentTool | undefined {
+  return tools.find((t) => t.name === name);
 }
 
 async function unfinishedDependencies(ids: string[]): Promise<string[]> {

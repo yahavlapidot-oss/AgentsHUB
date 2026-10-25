@@ -22,6 +22,13 @@
       "when": 1792877585582,
       "tag": "0002_agent_teamwork",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792950705747,
+      "tag": "0003_sandbox_artifacts",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import * as data from "@/lib/data";
-import { AGENT_KINDS, AGENT_ROLES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
+import { AGENT_KINDS, AGENT_ROLES, ARTIFACT_STATUSES, COLUMNS, COMMAND_TYPES, PRIORITIES, PROVIDERS } from "@/lib/schema";
 
 // Server actions used by the dashboard. The user is the actor (agentId null).
 
@@ -53,6 +53,7 @@ const NewAgent = z.object({
   kind: z.enum(AGENT_KINDS).default("sdk"),
   instructions: z.string().max(20_000).default(""),
   role: z.enum(AGENT_ROLES).default("member"),
+  sandboxEnabled: z.boolean().default(false),
 }).refine((a) => a.kind !== "hosted" || a.provider !== "custom", {
   message: "AgentsHUB can run Claude, GPT or Gemini agents",
 });
@@ -69,6 +70,14 @@ export async function rotateTokenAction(agentId: string) {
 
 export async function setAgentRoleAction(agentId: string, role: (typeof AGENT_ROLES)[number]) {
   await data.setAgentRole(agentId, z.enum(AGENT_ROLES).parse(role));
+}
+
+export async function setAgentSandboxAction(agentId: string, enabled: boolean) {
+  await data.setAgentSandbox(agentId, z.boolean().parse(enabled));
+}
+
+export async function setArtifactStatusAction(artifactId: string, status: (typeof ARTIFACT_STATUSES)[number]) {
+  await data.setArtifactStatus(artifactId, z.enum(ARTIFACT_STATUSES).parse(status));
 }
 
 const NoteInput = z.object({
@@ -99,9 +108,10 @@ export async function decideApprovalAction(approvalId: string, decision: "approv
 
 /** Timeline and chat for one task, for the task drawer. */
 export async function getTaskDetailAction(taskId: string) {
-  const [events, messages] = await Promise.all([
+  const [events, messages, artifacts] = await Promise.all([
     data.getEvents({ taskId, limit: 200 }),
     data.getMessages({ taskId, limit: 200 }),
+    data.getArtifacts({ taskId }),
   ]);
-  return { events, messages };
+  return { events, messages, artifacts };
 }

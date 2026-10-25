@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const PROVIDERS = ["anthropic", "openai", "google", "custom"] as const;
 /** "hosted" agents are run by AgentsHUB itself (see src/lib/runner); the rest connect from outside. */
@@ -12,6 +12,9 @@ export const EVENT_TYPES = ["tool_call", "file_edit", "note", "error", "status_c
 export const COMMAND_TYPES = ["pause", "resume", "redirect", "stop"] as const;
 export const RISKS = ["low", "medium", "high"] as const;
 export const DECISIONS = ["pending", "approved", "denied"] as const;
+export const SANDBOX_STATUSES = ["starting", "running", "closed", "failed"] as const;
+export const ARTIFACT_KINDS = ["code", "document", "image", "pdf", "data", "website", "other"] as const;
+export const ARTIFACT_STATUSES = ["draft", "in_review", "approved", "failed"] as const;
 
 export type Provider = (typeof PROVIDERS)[number];
 export type AgentRole = (typeof AGENT_ROLES)[number];
@@ -19,6 +22,7 @@ export type AgentStatus = (typeof AGENT_STATUSES)[number];
 export type Column = (typeof COLUMNS)[number];
 export type Priority = (typeof PRIORITIES)[number];
 export type EventType = (typeof EVENT_TYPES)[number];
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 export const agents = sqliteTable("agents", {
   id: text("id").primaryKey(),
@@ -33,6 +37,8 @@ export const agents = sqliteTable("agents", {
   role: text("role", { enum: AGENT_ROLES }).notNull().default("member"),
   /** Hosted agents: messages up to this time have been shown to the agent. */
   inboxReadAt: integer("inbox_read_at"),
+  /** Hosted agents: may open a cloud computer (sandbox) to write and run code. */
+  sandboxEnabled: integer("sandbox_enabled", { mode: "boolean" }).notNull().default(false),
   status: text("status", { enum: AGENT_STATUSES }).notNull().default("offline"),
   currentTaskId: text("current_task_id"),
   lastHeartbeat: integer("last_heartbeat"),
@@ -144,6 +150,54 @@ export const notes = sqliteTable("notes", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+/** Cloud computers (see src/lib/sandbox). One per hosted run that needs one; closed when the run ends. */
+export const sandboxes = sqliteTable(
+  "sandboxes",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id").notNull(),
+    taskId: text("task_id"),
+    runId: text("run_id"),
+    provider: text("provider").notNull(),
+    /** The provider's own id, used to kill a sandbox left behind by a crash. */
+    externalId: text("external_id"),
+    status: text("status", { enum: SANDBOX_STATUSES }).notNull().default("starting"),
+    commands: integer("commands").notNull().default(0),
+    costUsd: real("cost_usd").notNull().default(0),
+    error: text("error"),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [index("sandboxes_status_idx").on(t.status), index("sandboxes_task_idx").on(t.taskId)],
+);
+
+/**
+ * Files agents deliver. Every save of the same path on a task adds a new
+ * version; older versions stay. Content lives in the database for now (files
+ * are capped in size), so it survives the sandbox being deleted.
+ */
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id"),
+    agentId: text("agent_id"),
+    runId: text("run_id"),
+    sandboxId: text("sandbox_id"),
+    path: text("path").notNull(),
+    version: integer("version").notNull().default(1),
+    kind: text("kind", { enum: ARTIFACT_KINDS }).notNull().default("other"),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    note: text("note").notNull().default(""),
+    status: text("status", { enum: ARTIFACT_STATUSES }).notNull().default("draft"),
+    content: blob("content", { mode: "buffer" }).notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("artifacts_task_idx").on(t.taskId), uniqueIndex("artifacts_task_path_version").on(t.taskId, t.path, t.version)],
+);
+
 export type Agent = typeof agents.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Run = typeof runs.$inferSelect;
@@ -152,6 +206,10 @@ export type Message = typeof messages.$inferSelect;
 export type Command = typeof commands.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;
 export type Note = typeof notes.$inferSelect;
+export type Sandbox = typeof sandboxes.$inferSelect;
+export type Artifact = typeof artifacts.$inferSelect;
+/** Artifact without its bytes, for lists. */
+export type ArtifactInfo = Omit<Artifact, "content">;
 
 /** Agent as the UI sees it: never includes the token hash. */
 export type PublicAgent = Omit<Agent, "tokenHash">;
