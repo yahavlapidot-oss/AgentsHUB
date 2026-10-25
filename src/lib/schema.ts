@@ -70,6 +70,8 @@ export const projects = sqliteTable("projects", {
   /** Requirements, constraints and decisions every agent on the project should know. */
   context: text("context").notNull().default(""),
   memberAgentIds: text("member_agent_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+  /** Spending cap over all the project's tasks (models plus cloud computers). Agents stop at it. */
+  budgetUsd: real("budget_usd"),
   status: text("status", { enum: PROJECT_STATUSES }).notNull().default("active"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),

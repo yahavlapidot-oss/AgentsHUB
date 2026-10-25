@@ -37,7 +37,6 @@ import {
   getNotes,
   getProjects,
   getTask,
-  getTaskCost,
   getTasks,
   getWakeMessages,
   heartbeat,
@@ -48,6 +47,7 @@ import {
   updateTask,
 } from "../data";
 import { searchMemory, type MemorySource } from "../memory";
+import { budgetProblem } from "../budgets";
 import { boardLink, notifyByEmail } from "../notify";
 import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
@@ -230,6 +230,12 @@ async function loop(
   runId: string,
   sandbox?: SandboxSession,
 ): Promise<"success" | "failed" | "cancelled"> {
+  // Don't start a run the budget can't pay for.
+  const noBudget = await budgetProblem(task.id);
+  if (noBudget) {
+    await failTask(agent, task, runId, noBudget);
+    return "failed";
+  }
   const tools = toolsForAgent(agent, { sandbox: Boolean(sandbox) });
   const chat = createChat({
     provider: agent.provider,
@@ -259,7 +265,7 @@ async function loop(
       await failTask(agent, task, runId, res.stopProblem);
       return "failed";
     }
-    const overBudget = await budgetProblem(task, sandbox);
+    const overBudget = await budgetProblem(task.id, sandbox?.runningCost() ?? 0);
     if (overBudget) {
       await failTask(agent, task, runId, overBudget);
       return "failed";
@@ -329,15 +335,6 @@ async function failTask(agent: Agent, task: Task, runId: string, text: string): 
   );
 }
 
-
-/** The task's budget covers every run on it: model tokens plus cloud computer time. */
-async function budgetProblem(task: Task, sandbox?: SandboxSession): Promise<string | null> {
-  // Read it fresh: you may have changed the budget while the agent works.
-  const budget = (await getTask(task.id))?.budgetUsd;
-  if (budget == null) return null;
-  const spent = (await getTaskCost(task.id)) + (sandbox?.runningCost() ?? 0);
-  return spent >= budget ? `Stopped: the task's budget of $${budget.toFixed(2)} is used up ($${spent.toFixed(2)} spent)` : null;
-}
 
 /** Handles pause (waits here), stop, and redirect commands, and collects new messages for the agent. */
 async function readControl(agent: Agent, task: Task | null, since: number): Promise<{ stop: boolean; note?: string }> {

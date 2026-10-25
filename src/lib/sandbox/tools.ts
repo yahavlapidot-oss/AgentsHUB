@@ -69,7 +69,7 @@ export const SANDBOX_TOOLS: AgentTool[] = [
           tool: "run_command",
           input: { command },
           text: `$ ${command} → exit ${r.exitCode}`,
-          output: (r.stderr || r.stdout).slice(-600),
+          output: [r.stdout, r.stderr].filter(Boolean).join("\n").slice(-OUTPUT_KEPT),
         });
         return r;
       });
@@ -140,6 +140,9 @@ export const SANDBOX_TOOLS: AgentTool[] = [
     },
   }),
 ];
+
+/** How much of a command's output the activity log keeps, for the Live workspace. */
+const OUTPUT_KEPT = 4_000;
 
 /** Names of sandbox tools that write their own activity line. */
 export const SANDBOX_LOGGED_TOOLS = new Set(["run_command", "write_file", "preview_url"]);

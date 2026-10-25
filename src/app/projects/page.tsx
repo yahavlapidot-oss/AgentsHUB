@@ -2,13 +2,14 @@ import Link from "next/link";
 import { ProjectForm } from "@/components/projects/project-form";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { PageHeader } from "@/components/ui";
-import { getAgents, getArtifacts, getProjectCosts, getProjects, getTasks } from "@/lib/data";
+import { getSpendByProject } from "@/lib/budgets";
+import { getAgents, getArtifacts, getProjects, getTasks } from "@/lib/data";
 import { usd, PROJECT_STATUS_LABELS as STATUS_LABELS } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
-  const [projects, tasks, agents, costs, files] = await Promise.all([getProjects(), getTasks(), getAgents(), getProjectCosts(), getArtifacts({ latestOnly: true, limit: 5_000 })]);
+  const [projects, tasks, agents, costs, files] = await Promise.all([getProjects(), getTasks(), getAgents(), getSpendByProject(), getArtifacts({ latestOnly: true, limit: 5_000 })]);
   return (
     <div>
       <RefreshOnTick />
@@ -37,7 +38,7 @@ export default async function ProjectsPage() {
                   <p className="mt-2 flex flex-wrap gap-x-4 text-xs text-ink-faint">
                     <span>{done}/{mine.length} tasks done</span>
                     <span>{files.filter((f) => f.projectId === p.id).length} files</span>
-                    <span>{usd(costs.get(p.id) ?? 0)} spent</span>
+                    <span>{usd(costs.get(p.id)?.total ?? 0)}{p.budgetUsd != null ? ` of ${usd(p.budgetUsd)}` : ""} spent</span>
                     <span>{members.length ? members.join(", ") : "Every agent"}</span>
                   </p>
                 </Link>

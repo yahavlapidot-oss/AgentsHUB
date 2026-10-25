@@ -4,7 +4,8 @@ import { ArtifactsList } from "@/components/artifacts-list";
 import { NewProjectTask } from "@/components/projects/new-project-task";
 import { ProjectForm } from "@/components/projects/project-form";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
-import { getAgents, getArtifacts, getProject, getProjectCosts, getTasks } from "@/lib/data";
+import { getSpendByProject } from "@/lib/budgets";
+import { getAgents, getArtifacts, getProject, getTasks } from "@/lib/data";
 import { COLUMN_META, usd, PROJECT_STATUS_LABELS as STATUS_LABELS } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -13,10 +14,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const project = await getProject(id);
   if (!project) notFound();
-  const [tasks, agents, costs, files] = await Promise.all([getTasks(), getAgents(), getProjectCosts(), getArtifacts({ projectId: id, limit: 2_000 })]);
+  const [tasks, agents, costs, files] = await Promise.all([getTasks(), getAgents(), getSpendByProject(), getArtifacts({ projectId: id, limit: 2_000 })]);
   const mine = tasks.filter((t) => t.projectId === id);
   const latest = new Set<string>();
   const workspace = files.filter((f) => !latest.has(f.path) && latest.add(f.path));
+  const spent = costs.get(id) ?? { total: 0, models: 0, computers: 0 };
+  const over = project.budgetUsd != null && spent.total >= project.budgetUsd;
   const name = (agentId: string | null) => agents.find((a) => a.id === agentId)?.name ?? "Unassigned";
 
   return (
@@ -37,11 +40,16 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           ["Tasks", String(mine.length)],
           ["Done", String(mine.filter((t) => t.column === "done").length)],
           ["Files", String(workspace.length)],
-          ["Spent", usd(costs.get(id) ?? 0)],
-        ].map(([k, v]) => (
+          [
+            project.budgetUsd != null ? `Spent of ${usd(project.budgetUsd)}` : "Spent",
+            usd(spent.total),
+            `models ${usd(spent.models)} · cloud computers ${usd(spent.computers)}`,
+          ],
+        ].map(([k, v, sub]) => (
           <div key={k} className="bg-white px-6 py-3">
             <p className="text-xs text-ink-faint">{k}</p>
-            <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{v}</p>
+            <p className={`mt-0.5 font-mono text-xl font-semibold tabular-nums ${k.startsWith("Spent") && over ? "text-[#d83a52]" : ""}`}>{v}</p>
+            {sub && <p className="text-xs text-ink-faint">{sub}</p>}
           </div>
         ))}
       </div>

@@ -9,15 +9,17 @@ export function Sidebar() {
   const path = usePathname();
   const { approvals, agents } = useLive();
   const online = agents.filter((a) => a.status !== "offline").length;
+  const working = agents.filter((a) => a.currentTaskId && a.status !== "offline").length;
 
   const items = [
     { href: "/", label: "Main board", icon: "▦" },
     { href: "/projects", label: "Projects", icon: "◫" },
+    { href: "/live", label: "Live workspace", icon: "▶", badge: working ? String(working) : undefined },
     { href: "/agents", label: "Agents", icon: "◉", badge: `${online}/${agents.length}` },
     { href: "/chat", label: "Agent chat", icon: "✉" },
     { href: "/notes", label: "Team notes", icon: "✎" },
     { href: "/artifacts", label: "Files", icon: "▧" },
-    { href: "/usage", label: "Models & tokens", icon: "▤" },
+    { href: "/usage", label: "Usage & costs", icon: "▤" },
     { href: "/approvals", label: "Approvals", icon: "✓", alert: approvals.length },
     { href: "/audit", label: "Audit log", icon: "☰" },
   ];

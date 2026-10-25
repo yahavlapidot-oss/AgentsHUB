@@ -78,10 +78,11 @@ export async function getTask(id: string): Promise<Task | null> {
 }
 
 export async function getEvents(
-  opts: { taskId?: string; agentId?: string; limit?: number } = {},
+  opts: { taskId?: string; agentId?: string; runId?: string; limit?: number } = {},
 ): Promise<AgentEvent[]> {
   const where = and(
     opts.taskId ? eq(events.taskId, opts.taskId) : undefined,
+    opts.runId ? eq(events.runId, opts.runId) : undefined,
     opts.agentId ? eq(events.agentId, opts.agentId) : undefined,
   );
   return db
@@ -742,12 +743,12 @@ export async function expireApproval(id: string): Promise<void> {
 
 type StopState = { at: number; agentIds: string[] };
 
-async function getSetting<T>(key: string): Promise<T | null> {
+export async function getSetting<T>(key: string): Promise<T | null> {
   const [row] = await db.select().from(settings).where(eq(settings.key, key));
   return (row?.value as T | undefined) ?? null;
 }
 
-async function setSetting(key: string, value: unknown | null): Promise<void> {
+export async function setSetting(key: string, value: unknown | null): Promise<void> {
   if (value === null) {
     await db.delete(settings).where(eq(settings.key, key));
     return;
@@ -952,7 +953,14 @@ export async function getProject(id: string): Promise<Project | null> {
   return row ?? null;
 }
 
-export type ProjectInput = { name: string; goal?: string; context?: string; memberAgentIds?: string[]; status?: Project["status"] };
+export type ProjectInput = {
+  name: string;
+  goal?: string;
+  context?: string;
+  memberAgentIds?: string[];
+  status?: Project["status"];
+  budgetUsd?: number | null;
+};
 
 export async function createProject(input: ProjectInput): Promise<Project> {
   const now = Date.now();
@@ -965,6 +973,7 @@ export async function createProject(input: ProjectInput): Promise<Project> {
       context: input.context ?? "",
       memberAgentIds: [...new Set(input.memberAgentIds ?? [])],
       status: input.status ?? "active",
+      budgetUsd: input.budgetUsd ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -983,16 +992,6 @@ export async function deleteProject(id: string): Promise<void> {
   await db.update(tasks).set({ projectId: null }).where(eq(tasks.projectId, id));
   await db.update(artifacts).set({ projectId: null }).where(eq(artifacts.projectId, id));
   await db.delete(projects).where(eq(projects.id, id));
-}
-
-/** Model and cloud computer spend per project, over all runs on its tasks. */
-export async function getProjectCosts(): Promise<Map<string, number>> {
-  const rows = await db
-    .select({ projectId: tasks.projectId, cost: sql<number>`coalesce(sum(${runs.costUsd}), 0)` })
-    .from(runs)
-    .innerJoin(tasks, eq(runs.taskId, tasks.id))
-    .groupBy(tasks.projectId);
-  return new Map(rows.filter((r) => r.projectId).map((r) => [r.projectId!, Number(r.cost)]));
 }
 
 /** A project without members is open to every agent. */

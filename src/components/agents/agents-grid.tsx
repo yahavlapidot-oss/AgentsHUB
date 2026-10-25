@@ -22,7 +22,7 @@ export function AgentsGrid() {
           </button>
         }
       />
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         {!agents.length ? (
           <EmptyState
             title="No agents connected"
@@ -36,7 +36,7 @@ export function AgentsGrid() {
               const open = tasks.filter((t) => t.ownerAgentId === a.id && t.column !== "done").length;
               const status = AGENT_STATUS_META[a.status];
               return (
-                <Link key={a.id} href={`/agents/${a.id}`} className="card flex flex-col gap-3 p-4 transition-shadow hover:shadow-md">
+                <Link key={a.id} href={`/agents/${a.id}`} className="card flex min-w-0 flex-col gap-3 p-4 transition-shadow hover:shadow-md">
                   <div className="flex items-center gap-3">
                     <AgentAvatar agent={a} size={40} />
                     <div className="min-w-0 flex-1">
