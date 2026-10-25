@@ -20,7 +20,7 @@ export function inScope(t: Pick<Task, "projectId">, scope: ProjectScope): boolea
   return scope === "all" ? true : scope === "none" ? !t.projectId : t.projectId === scope;
 }
 
-export function Board({ initialProject = "all" }: { initialProject?: ProjectScope }) {
+export function Board({ initialProject = "all", initialTaskId = null }: { initialProject?: ProjectScope; initialTaskId?: string | null }) {
   const { tasks: allTasks, agents: allAgents, projects } = useLive();
   const [scope, setScopeState] = useState<ProjectScope>(initialProject);
   const project = projects.find((p) => p.id === scope);
@@ -31,7 +31,7 @@ export function Board({ initialProject = "all" }: { initialProject?: ProjectScop
   const [view, setView] = useState<View>("table");
   const [query, setQuery] = useState("");
   const [agentFilter, setAgentFilter] = useState<string | "all" | "none">("all");
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(initialTaskId ?? null);
   const [creating, setCreating] = useState(false);
 
   const visible = useMemo(() => {

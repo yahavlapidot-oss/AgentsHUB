@@ -85,6 +85,13 @@
       "when": 1792970371686,
       "tag": "0011_project_lead_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1792972540457,
+      "tag": "0012_schedules",
+      "breakpoints": true
     }
   ]
 }

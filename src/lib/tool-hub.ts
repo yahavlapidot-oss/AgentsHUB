@@ -10,6 +10,7 @@ import { AGENT_TOOLS, ToolInputError, type AgentTool, type ToolContext } from ".
 import { addEvent, ConflictError } from "./data";
 import type { Agent } from "./schema";
 import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "./sandbox/tools";
+import { SCHEDULE_TOOLS } from "./tools/schedule";
 import { WEB_TOOLS } from "./tools/web";
 
 export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "web", "computer", "control"] as const;
@@ -69,11 +70,14 @@ export const CATALOG: Record<string, ToolInfo> = {
   read_file: { category: "computer", risk: "read", needsSandbox: true },
   list_files: { category: "computer", risk: "read", needsSandbox: true },
   preview_url: { category: "computer", risk: "external", needsSandbox: true },
+  schedule_task: { category: "board", risk: "write" },
+  list_schedules: { category: "board", risk: "read" },
+  pause_schedule: { category: "board", risk: "write" },
   web_search: { category: "web", risk: "external" },
   fetch_page: { category: "web", risk: "external" },
 };
 
-export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS];
+export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS];
 
 export function toolInfo(name: string): ToolInfo {
   return CATALOG[name] ?? { category: "board", risk: "write" };
@@ -103,7 +107,7 @@ const MAX_SAME_CALL = Number(process.env.TOOL_MAX_SAME_CALL ?? 5);
 /** Tools that write their own activity line. */
 const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message", "save_artifact", ...SANDBOX_LOGGED_TOOLS]);
 /** Calls that are meant to repeat (polling). */
-const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes", "read_saved_file", "list_projects"]);
+const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes", "read_saved_file", "list_projects", "list_schedules"]);
 
 /**
  * Runs one agent's tool calls for one run, the same way for every provider:

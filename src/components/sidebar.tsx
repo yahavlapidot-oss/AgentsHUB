@@ -18,6 +18,7 @@ export function useNavItems(): NavItem[] {
     { href: "/live", label: "Live workspace", icon: "▶", badge: working ? String(working) : undefined },
     { href: "/agents", label: "Agents", icon: "◉", badge: `${online}/${agents.length}` },
     { href: "/chat", label: "Chats", icon: "✉" },
+    { href: "/schedules", label: "Schedules", icon: "⏱" },
     { href: "/notes", label: "Team notes", icon: "✎" },
     { href: "/artifacts", label: "Files", icon: "▧" },
     { href: "/usage", label: "Usage & costs", icon: "▤" },

@@ -268,6 +268,48 @@ export const artifacts = sqliteTable(
   (t) => [index("artifacts_task_idx").on(t.taskId), index("artifacts_project_idx").on(t.projectId), uniqueIndex("artifacts_task_path_version").on(t.taskId, t.path, t.version)],
 );
 
+export const SCHEDULE_FREQUENCIES = ["minutes", "hourly", "daily", "weekly", "monthly"] as const;
+export type ScheduleFrequency = (typeof SCHEDULE_FREQUENCIES)[number];
+
+/**
+ * Recurring work: at each due time the scheduler adds a task to Ready with these
+ * fields, for the chosen agent (or whoever picks it up). Times are wall-clock in
+ * `timezone`, so "daily at 08:00" stays 08:00 across daylight saving.
+ */
+export const schedules = sqliteTable(
+  "schedules",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    acceptanceCriteria: text("acceptance_criteria").notNull().default(""),
+    priority: text("priority", { enum: PRIORITIES }).notNull().default("medium"),
+    projectId: text("project_id"),
+    ownerAgentId: text("owner_agent_id"),
+    frequency: text("frequency", { enum: SCHEDULE_FREQUENCIES }).notNull().default("daily"),
+    /** For "minutes": how many minutes between runs (at least 15). */
+    intervalMinutes: integer("interval_minutes"),
+    /** "HH:MM" for daily, weekly and monthly; for hourly only the minutes count. */
+    timeOfDay: text("time_of_day").notNull().default("08:00"),
+    /** Weekly: days to run, 0 = Sunday. */
+    weekdays: text("weekdays", { mode: "json" }).$type<number[]>().notNull().default([]),
+    /** Monthly: day of the month (1-28). */
+    dayOfMonth: integer("day_of_month"),
+    timezone: text("timezone").notNull().default("Asia/Jerusalem"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** Don't add a new task while the last one is still open, so missed runs don't pile up. */
+    skipIfOpen: integer("skip_if_open", { mode: "boolean" }).notNull().default(true),
+    nextRunAt: integer("next_run_at"),
+    lastRunAt: integer("last_run_at"),
+    lastTaskId: text("last_task_id"),
+    runCount: integer("run_count").notNull().default(0),
+    createdBy: text("created_by").notNull().default("user"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("schedules_next_idx").on(t.nextRunAt)],
+);
+
 export type Agent = typeof agents.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -280,6 +322,7 @@ export type Note = typeof notes.$inferSelect;
 export type AgentMemory = typeof agentMemories.$inferSelect;
 export type Sandbox = typeof sandboxes.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
+export type Schedule = typeof schedules.$inferSelect;
 /** Artifact without its bytes, for lists. */
 export type ArtifactInfo = Omit<Artifact, "content">;
 

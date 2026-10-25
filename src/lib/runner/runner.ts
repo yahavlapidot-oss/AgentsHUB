@@ -48,7 +48,9 @@ import {
   takePendingCommands,
   updateTask,
 } from "../data";
+import { runHousekeeping } from "../jobs";
 import { searchMemory, type MemorySource } from "../memory";
+import { runDueSchedules } from "../schedules";
 import { budgetProblem } from "../budgets";
 import { recordProblem, runnerStarted, runnerTicked } from "../monitor";
 import { boardLink, notifyByEmail } from "../notify";
@@ -150,8 +152,11 @@ async function tick(jobs: Map<string, Job>): Promise<void> {
   ticking = true;
   let problem: string | null = null;
   try {
+    // Digests and backups run whatever the agents are doing.
+    await runHousekeeping();
     // Nothing starts while the emergency stop is on.
     if (await getEmergencyStop()) return;
+    await runDueSchedules();
     const hosted = await getHostedAgents();
     for (const agent of hosted) {
       if (jobs.has(agent.id)) continue;
