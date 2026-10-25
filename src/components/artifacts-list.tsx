@@ -20,8 +20,19 @@ const KIND_ICON: Record<ArtifactInfo["kind"], string> = {
 type Status = ArtifactInfo["status"];
 
 /** Files agents saved, one row per file with its older versions folded under it. */
-export function ArtifactsList({ artifacts, showTask = false, onChange }: { artifacts: ArtifactInfo[]; showTask?: boolean; onChange?: () => void }) {
-  const { agents, tasks } = useLive();
+export function ArtifactsList({
+  artifacts,
+  showTask = false,
+  showProject = false,
+  onChange,
+}: {
+  artifacts: ArtifactInfo[];
+  showTask?: boolean;
+  showProject?: boolean;
+  onChange?: () => void;
+}) {
+  const { agents, tasks, projects } = useLive();
+  const nameOf = (agentId: string | null) => agents.find((a) => a.id === agentId)?.name ?? (agentId ? "Agent" : "You");
   const groups = new Map<string, ArtifactInfo[]>();
   for (const a of artifacts) {
     // Project files share one history per path across the project's tasks.
@@ -45,8 +56,9 @@ export function ArtifactsList({ artifacts, showTask = false, onChange }: { artif
             key={latest.id}
             latest={latest}
             older={sorted.slice(1)}
-            agentName={agents.find((a) => a.id === latest.agentId)?.name ?? (latest.agentId ? "Agent" : "You")}
+            nameOf={nameOf}
             taskTitle={showTask ? tasks.find((t) => t.id === latest.taskId)?.title : undefined}
+            projectName={showProject ? projects.find((p) => p.id === latest.projectId)?.name : undefined}
             onChange={onChange}
           />
         );
@@ -58,14 +70,16 @@ export function ArtifactsList({ artifacts, showTask = false, onChange }: { artif
 function ArtifactRow({
   latest,
   older,
-  agentName,
+  nameOf,
   taskTitle,
+  projectName,
   onChange,
 }: {
   latest: ArtifactInfo;
   older: ArtifactInfo[];
-  agentName: string;
+  nameOf: (agentId: string | null) => string;
   taskTitle?: string;
+  projectName?: string;
   onChange?: () => void;
 }) {
   const [preview, setPreview] = useState(false);
@@ -77,9 +91,10 @@ function ArtifactRow({
       <div className="flex flex-wrap items-center gap-3">
         <span className="grid h-8 w-10 shrink-0 place-items-center rounded bg-canvas font-mono text-[11px] text-ink-soft">{KIND_ICON[latest.kind]}</span>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-sm font-medium">{latest.path}</p>
-          <p className="truncate text-xs text-ink-faint">
-            v{latest.version} · {bytes(latest.sizeBytes)} · {agentName} · {timeAgo(latest.createdAt)}
+          <p className="break-all font-mono text-sm font-medium sm:truncate">{latest.path}</p>
+          <p className="text-xs text-ink-faint sm:truncate">
+            v{latest.version} · {bytes(latest.sizeBytes)} · by {nameOf(latest.agentId)} · {timeAgo(latest.createdAt)}
+            {projectName && <> · {projectName}</>}
             {taskTitle && <> · {taskTitle}</>}
           </p>
           {latest.note && <p className="mt-0.5 text-xs text-ink-soft">{latest.note}</p>}
@@ -111,7 +126,7 @@ function ArtifactRow({
           <ul className="mt-1 flex flex-col gap-1 pl-4">
             {older.map((v) => (
               <li key={v.id} className="flex gap-2">
-                <span>v{v.version} · {bytes(v.sizeBytes)} · {timeAgo(v.createdAt)}</span>
+                <span>v{v.version} · {bytes(v.sizeBytes)} · by {nameOf(v.agentId)} · {timeAgo(v.createdAt)}</span>
                 <a className="text-brand hover:underline" href={`/api/ui/artifacts/${v.id}`} target="_blank" rel="noreferrer">Open</a>
                 <a className="text-brand hover:underline" href={`/api/ui/artifacts/${v.id}?download=1`}>Download</a>
                 {isText(v) && isText(latest) && (

@@ -15,14 +15,17 @@ export function ProjectForm({ project, agents, onDone }: { project?: Project; ag
   const [context, setContext] = useState(project?.context ?? "");
   const [members, setMembers] = useState<string[]>(project?.memberAgentIds ?? []);
   const [status, setStatus] = useState<Project["status"]>(project?.status ?? "active");
+  const [budget, setBudget] = useState(project?.budgetUsd != null ? String(project.budgetUsd) : "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return setErr("Give the project a name.");
+    const budgetUsd = budget.trim() ? Number(budget) : null;
+    if (budgetUsd != null && !(budgetUsd > 0)) return setErr("The budget must be a positive amount, or empty for none.");
     setSaving(true);
-    const input = { name, goal, context, memberAgentIds: members, status };
+    const input = { name, goal, context, memberAgentIds: members, status, budgetUsd };
     try {
       if (project) {
         await updateProjectAction(project.id, input);
@@ -79,6 +82,18 @@ export function ProjectForm({ project, agents, onDone }: { project?: Project; ag
           {!agents.length && <span className="text-sm text-ink-soft">No agents yet.</span>}
         </div>
       </fieldset>
+      <div>
+        <label className="label" htmlFor="pf-budget">Budget (USD)</label>
+        <input
+          id="pf-budget"
+          className="input"
+          inputMode="decimal"
+          value={budget}
+          onChange={(e) => setBudget(e.target.value)}
+          placeholder="No limit"
+        />
+        <p className="mt-1 text-xs text-ink-faint">Models plus cloud computers over all its tasks. You get an email at 80%; agents stop at 100%.</p>
+      </div>
       {project && (
         <div>
           <label className="label" htmlFor="pf-status">Status</label>

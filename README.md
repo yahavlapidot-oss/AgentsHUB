@@ -9,7 +9,9 @@ Any agent that can make an HTTP request can report to it. The connect screen has
 - **Main board**: tasks grouped by status, with owner, priority, progress and model for each. A Kanban view lets you drag cards between columns. Clicking a task opens its updates, activity log and details.
 - **Agents**: one card per agent, showing its current task, its status (working, waiting on you, paused, offline), its tokens and its cost. Each agent's page has pause, resume, stop, and "redirect with an instruction".
 - **Agent chat**: messages between agents, which you can filter by agent or task. You can write to any agent.
-- **Models & tokens**: usage per agent and per model, plus recent runs.
+- **Live workspace**: every agent at work right now, with its cloud computer, each command it runs and the output, as it happens. Pause, resume, stop, or step in with an instruction from the same card.
+- **Usage & costs**: spend this month against your monthly cap, split into models and cloud computers, per agent, per model and per project, plus recent runs.
+- **Files**: everything agents delivered, filtered by project, review status and who made each version.
 - **Approvals**: agents ask here before risky steps. Their task moves to *Waiting on you* until you approve or deny.
 
 The board refreshes every few seconds.
@@ -106,7 +108,7 @@ Set `E2B_API_KEY` on the server (E2B's free Hobby plan comes with $100 of credit
 - opens on the agent's first sandbox tool call, so tasks that don't need one cost nothing, and is always closed when the run ends (also after a server restart);
 - starts with no server secrets in its environment, and only sees paths in `/home/user` and `/tmp`;
 - lives at most `SANDBOX_TIMEOUT_MS` (default 30 minutes, enforced by E2B too), each command at most `SANDBOX_COMMAND_TIMEOUT_MS` (default 5 minutes), and at most `SANDBOX_MAX_CONCURRENT` sandboxes run at once (default 3);
-- costs about $0.11 an hour (`SANDBOX_USD_PER_HOUR`), which is added to the run's cost, so it counts in **Models & tokens** and against the task's budget. A task with a budget stops and moves to *Waiting on you* when the budget is used up;
+- costs about $0.11 an hour (`SANDBOX_USD_PER_HOUR`), which is added to the run's cost, so it counts in **Usage & costs** and against the budgets (see [Budgets](#budgets));
 - runs commands through the same approval rules, except the "irreversible" ones: deleting files in a throwaway sandbox is fine, but `git push`, deploys, publishing, payments and sending messages still wait for you.
 
 When a later run picks up the same task, the files saved on it are put back into the new sandbox, so the agent can continue where it stopped. Agents without a sandbox (and MCP agents) can also save text files with `save_artifact` and `content`.
@@ -142,6 +144,16 @@ A **project** groups tasks that build one thing, like an app or a report. Create
 - **Who may work on it:** pick members on the project page. Only members take its tasks and change its files; with no members, every agent may. Agents don't take tasks of a paused or done project.
 - **Handing work over:** an agent passes a task it owns to another with `hand_off` and a note on what's done, what's left, decisions and test results. The new owner gets a message and the note leads its brief, together with the project's goal and the file list, so it can continue from cold.
 - Subtasks stay in their parent's project. Moving a task to another project moves its files with it; deleting a project keeps its tasks and files, outside any project.
+
+## Budgets
+
+Three caps, each optional, cover models plus cloud computer time:
+
+- **Task budget**: set on the task.
+- **Project budget**: on the project's settings, over all its tasks.
+- **Monthly cap**: on *Usage & costs*, for the whole hub; it starts over on the 1st (UTC).
+
+At 80% of a project budget or the monthly cap you get one email (raising the cap re-arms it). At 100% the agent stops after its current step, the task moves to *Waiting on you*, and no new run starts on it until you raise the cap. A running cloud computer counts before it closes.
 
 ## Memory and context
 

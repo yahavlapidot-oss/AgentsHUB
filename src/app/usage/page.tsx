@@ -1,17 +1,27 @@
+import Link from "next/link";
+import { MonthlyCapForm } from "@/components/monthly-cap";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { AgentAvatar, PageHeader, ProviderTag } from "@/components/ui";
-import { getAgents, getRuns, getUsage, type UsageRow } from "@/lib/data";
+import { ALERT_AT, getComputerSpend, getMonthStatus, getSpend, getSpendByProject } from "@/lib/budgets";
+import { getAgents, getProjects, getRuns, getUsage, type UsageRow } from "@/lib/data";
 import { compact, timeAgo, usd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function UsagePage() {
-  const [byAgent, byModel, agents, runs] = await Promise.all([
+  const [byAgent, byModel, agents, runs, month, allTime, byProject, computersByAgent, computersByModel, projects] = await Promise.all([
     getUsage("agent"),
     getUsage("model"),
     getAgents(),
     getRuns({ limit: 25 }),
+    getMonthStatus(),
+    getSpend(),
+    getSpendByProject(),
+    getComputerSpend("agent"),
+    getComputerSpend("model"),
+    getProjects(),
   ]);
+  const share = month.cap ? Math.min(1, month.spent.total / month.cap) : 0;
   const total = byModel.reduce(
     (s, r) => ({ runs: s.runs + r.runs, tokensIn: s.tokensIn + r.tokensIn, tokensOut: s.tokensOut + r.tokensOut, costUsd: s.costUsd + r.costUsd }),
     { runs: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 },
@@ -21,12 +31,40 @@ export default async function UsagePage() {
   return (
     <div>
       <RefreshOnTick />
-      <PageHeader title="Models & tokens" subtitle="Token usage and cost as reported by your agents, per agent and per model." />
+      <PageHeader title="Usage & costs" subtitle="What your agents spend on models and cloud computers, and the caps that stop them." />
+      <section className="border-b border-line bg-white px-6 py-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs text-ink-faint">This month</p>
+            <p className="font-mono text-2xl font-semibold tabular-nums">
+              {usd(month.spent.total)}
+              {month.cap != null && <span className="text-base font-normal text-ink-soft"> of {usd(month.cap)}</span>}
+            </p>
+            <p className="text-xs text-ink-soft">
+              models {usd(month.spent.models)} · cloud computers {usd(month.spent.computers)}
+            </p>
+          </div>
+          <MonthlyCapForm cap={month.cap} />
+        </div>
+        {month.cap != null && (
+          <>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-canvas">
+              <div
+                className="h-full"
+                style={{ width: `${share * 100}%`, background: share >= 1 ? "#d83a52" : share >= ALERT_AT ? "#fdab3d" : "#00c875" }}
+              />
+            </div>
+            <p className="mt-1 text-xs text-ink-faint">
+              {share >= 1 ? "The cap is used up: agents won't start or continue work until next month or a higher cap." : `You get an email at ${ALERT_AT * 100}%. Agents stop at the cap.`}
+            </p>
+          </>
+        )}
+      </section>
       <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-4">
         {[
           ["Tokens in", compact(total.tokensIn)],
           ["Tokens out", compact(total.tokensOut)],
-          ["Reported cost", usd(total.costUsd)],
+          ["All-time cost", usd(allTime.total)],
           ["Runs", String(total.runs)],
         ].map(([k, v]) => (
           <div key={k} className="bg-white px-6 py-3">
@@ -39,6 +77,7 @@ export default async function UsagePage() {
         <UsageBars
           title="By agent"
           rows={byAgent}
+          computers={computersByAgent}
           label={(key) => {
             const a = agentById.get(key);
             return a ? (
@@ -51,7 +90,50 @@ export default async function UsagePage() {
             );
           }}
         />
-        <UsageBars title="By model" rows={byModel} label={(key) => <span className="truncate font-mono text-xs">{key}</span>} />
+        <UsageBars title="By model" rows={byModel} computers={computersByModel} label={(key) => <span className="truncate font-mono text-xs">{key}</span>} />
+        <section className="card overflow-x-auto lg:col-span-2">
+          <h2 className="border-b border-line px-4 py-3 font-semibold">By project and cost type</h2>
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-ink-faint">
+              <tr>
+                <th className="px-4 py-2 font-medium">Project</th>
+                <th className="px-4 py-2 text-right font-medium">Models</th>
+                <th className="px-4 py-2 text-right font-medium">Cloud computers</th>
+                <th className="px-4 py-2 text-right font-medium">Total</th>
+                <th className="px-4 py-2 text-right font-medium">Budget</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p) => {
+                const s = byProject.get(p.id) ?? { models: 0, computers: 0, total: 0 };
+                const over = p.budgetUsd != null && s.total >= p.budgetUsd;
+                return (
+                  <tr key={p.id} className="border-t border-line">
+                    <td className="px-4 py-2"><Link href={`/projects/${p.id}`} className="hover:underline">{p.name}</Link></td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(s.models)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(s.computers)}</td>
+                    <td className={`px-4 py-2 text-right font-mono text-xs tabular-nums ${over ? "text-[#d83a52]" : ""}`}>{usd(s.total)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums text-ink-soft">{p.budgetUsd != null ? usd(p.budgetUsd) : "none"}</td>
+                  </tr>
+                );
+              })}
+              {(() => {
+                const inProjects = [...byProject.values()].reduce((a, s) => ({ models: a.models + s.models, computers: a.computers + s.computers }), { models: 0, computers: 0 });
+                const models = Math.max(0, allTime.models - inProjects.models);
+                const computers = Math.max(0, allTime.computers - inProjects.computers);
+                return (
+                  <tr className="border-t border-line text-ink-soft">
+                    <td className="px-4 py-2">No project</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(models)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(computers)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(models + computers)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{month.cap != null ? "monthly cap" : "none"}</td>
+                  </tr>
+                );
+              })()}
+            </tbody>
+          </table>
+        </section>
         <section className="card overflow-x-auto lg:col-span-2">
           <h2 className="border-b border-line px-4 py-3 font-semibold">Recent runs</h2>
           {runs.length ? (
@@ -96,7 +178,18 @@ export default async function UsagePage() {
   );
 }
 
-function UsageBars({ title, rows, label }: { title: string; rows: UsageRow[]; label: (key: string) => React.ReactNode }) {
+/** Token bars. Cost includes cloud computer time; `computers` says how much of it per row. */
+function UsageBars({
+  title,
+  rows,
+  label,
+  computers,
+}: {
+  title: string;
+  rows: UsageRow[];
+  label: (key: string) => React.ReactNode;
+  computers?: Map<string, number>;
+}) {
   const max = Math.max(1, ...rows.map((r) => r.tokensIn + r.tokensOut));
   return (
     <section className="card">
@@ -118,6 +211,7 @@ function UsageBars({ title, rows, label }: { title: string; rows: UsageRow[]; la
               </div>
               <span className="w-28 text-right font-mono text-xs tabular-nums text-ink-soft">
                 {compact(r.tokensIn + r.tokensOut)} · {usd(r.costUsd)}
+                {computers?.get(r.key) ? <span className="block text-ink-faint">{usd(computers.get(r.key)!)} computers</span> : null}
               </span>
             </li>
           ))}

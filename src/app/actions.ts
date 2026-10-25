@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { setMonthlyCap } from "@/lib/budgets";
 import * as data from "@/lib/data";
 import { diffLines, toHunks } from "@/lib/diff";
 import { cleanDisabledTools } from "@/lib/tool-hub";
@@ -92,6 +93,11 @@ export async function resumeAllAction() {
   return { agents: await data.resumeAfterEmergencyStop() };
 }
 
+/** The hub-wide monthly spending cap; null removes it. */
+export async function setMonthlyCapAction(usd: number | null) {
+  await setMonthlyCap(z.number().positive().max(1_000_000).nullable().parse(usd));
+}
+
 export async function setAgentSandboxAction(agentId: string, enabled: boolean) {
   await data.setAgentSandbox(agentId, z.boolean().parse(enabled));
 }
@@ -144,6 +150,7 @@ const ProjectInput = z.object({
   context: z.string().trim().max(20_000).default(""),
   memberAgentIds: z.array(z.string()).max(100).default([]),
   status: z.enum(PROJECT_STATUSES).default("active"),
+  budgetUsd: z.number().positive().max(1_000_000).nullable().optional(),
 });
 
 export async function createProjectAction(input: z.input<typeof ProjectInput>) {
