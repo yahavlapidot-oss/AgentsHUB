@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AgentControls } from "@/components/agents/agent-controls";
 import { AgentTimeline } from "@/components/agents/agent-timeline";
+import { AgentTools, type AgentToolRow } from "@/components/agents/agent-tools";
+import { ALL_TOOLS, CATEGORY_LABELS, TOOL_CATEGORIES, toolInfo } from "@/lib/tool-hub";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { AgentAvatar, ProviderTag } from "@/components/ui";
 import { sandboxesAvailable } from "@/lib/sandbox/provider";
@@ -90,6 +92,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
               <p className="px-4 py-6 text-sm text-ink-soft">No tasks assigned. Assign one from the board.</p>
             )}
           </section>
+          <AgentTools agentId={agent.id} groups={toolGroups(agent)} sandboxOn={agent.kind === "hosted" && agent.sandboxEnabled} />
           <section className="card">
             <h2 className="border-b border-line px-4 py-3 font-semibold">Activity</h2>
             <div className="p-4"><AgentTimeline events={events} /></div>
@@ -133,4 +136,22 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       </div>
     </div>
   );
+}
+
+/** Outside agents never get the sandbox tools, so their list leaves them out. */
+function toolGroups(agent: { kind: string; disabledTools: string[] }): { label: string; tools: AgentToolRow[] }[] {
+  const off = new Set(agent.disabledTools);
+  const rows: (AgentToolRow & { category: (typeof TOOL_CATEGORIES)[number] })[] = ALL_TOOLS.map((t) => {
+    const info = toolInfo(t.name);
+    return {
+      name: t.name,
+      summary: t.description.split(/(?<=\.)\s/)[0],
+      category: info.category,
+      risk: info.risk,
+      core: Boolean(info.core),
+      needsSandbox: Boolean(info.needsSandbox),
+      enabled: Boolean(info.core) || !off.has(t.name),
+    };
+  }).filter((t) => agent.kind === "hosted" || !t.needsSandbox);
+  return TOOL_CATEGORIES.map((c) => ({ label: CATEGORY_LABELS[c], tools: rows.filter((r) => r.category === c) })).filter((g) => g.tools.length);
 }

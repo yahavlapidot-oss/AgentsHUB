@@ -213,6 +213,10 @@ export async function setAgentRole(agentId: string, role: AgentRole): Promise<vo
   await db.update(agents).set({ role }).where(eq(agents.id, agentId));
 }
 
+export async function setAgentDisabledTools(agentId: string, names: string[]): Promise<void> {
+  await db.update(agents).set({ disabledTools: names }).where(eq(agents.id, agentId));
+}
+
 export async function setAgentSandbox(agentId: string, enabled: boolean): Promise<void> {
   await db.update(agents).set({ sandboxEnabled: enabled }).where(eq(agents.id, agentId));
 }

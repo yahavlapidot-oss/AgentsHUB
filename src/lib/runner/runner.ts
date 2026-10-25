@@ -14,7 +14,7 @@
  * redirect commands are read between model turns; request_approval waits for
  * your decision on the Approvals page.
  */
-import { AGENT_TOOLS, findTool, ToolInputError, type AgentTool, type ToolContext } from "../agent-tools";
+import type { ToolContext } from "../agent-tools";
 import { gateAction, type GateResult } from "../control";
 import {
   addEvent,
@@ -43,7 +43,7 @@ import { boardLink, notifyByEmail } from "../notify";
 import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
 import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
-import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "../sandbox/tools";
+import { ToolExecutor, toolsForAgent } from "../tool-hub";
 import type { Agent, Message, PublicAgent, Task } from "../schema";
 import { createChat, MissingKeyError, type ToolOutput } from "./providers";
 
@@ -210,7 +210,7 @@ async function loop(
   runId: string,
   sandbox?: SandboxSession,
 ): Promise<"success" | "failed" | "cancelled"> {
-  const tools: AgentTool[] = sandbox ? [...AGENT_TOOLS, ...SANDBOX_TOOLS] : AGENT_TOOLS;
+  const tools = toolsForAgent(agent, { sandbox: Boolean(sandbox) });
   const chat = createChat({
     provider: agent.provider,
     model: agent.model,
@@ -219,6 +219,7 @@ async function loop(
   });
 
   const ctx: ToolContext = { agent, taskId: task.id, runId, sandbox, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const executor = new ToolExecutor(tools, ctx, { taskId: task.id, runId });
 
   // Messages that came in while the agent was idle arrive with the first turn.
   let lastInboxCheck = inboxSince(agent);
@@ -286,29 +287,9 @@ async function loop(
     const outputs: ToolOutput[] = [];
     let completed = false;
     for (const call of res.toolCalls) {
-      const tool = findTool(call.name, tools);
-      if (!tool) {
-        outputs.push({ id: call.id, name: call.name, output: `Unknown tool ${call.name}`, isError: true });
-        continue;
-      }
-      try {
-        const result = await tool.run(call.args, ctx);
-        outputs.push({ id: call.id, name: call.name, output: JSON.stringify(result).slice(0, 50_000) });
-        if (call.name === "complete_task") completed = true;
-      } catch (e) {
-        const known = e instanceof ToolInputError || e instanceof ConflictError;
-        if (!known) console.error(`[runner] tool ${call.name} failed`, e);
-        outputs.push({ id: call.id, name: call.name, output: known ? (e as Error).message : "Internal error", isError: true });
-      }
-      if (!QUIET_TOOLS.has(call.name)) {
-        await addEvent({
-          agentId: agent.id,
-          taskId: task.id,
-          runId,
-          type: "tool_call",
-          payload: { tool: call.name, input: shorten(call.args) },
-        });
-      }
+      const out = await executor.run(call);
+      outputs.push(out);
+      if (call.name === "complete_task" && !out.isError) completed = true;
     }
     if (completed) return "success";
     input = { toolOutputs: outputs, text: control.note };
@@ -328,8 +309,6 @@ async function failTask(agent: Agent, task: Task, runId: string, text: string): 
   );
 }
 
-/** Tools that already write their own activity line. */
-const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message", "save_artifact", ...SANDBOX_LOGGED_TOOLS]);
 
 /** The task's budget covers every run on it: model tokens plus cloud computer time. */
 async function budgetProblem(task: Task, sandbox?: SandboxSession): Promise<string | null> {
@@ -471,8 +450,10 @@ export async function runInbox(agent: Agent, waiting: Message[]): Promise<void> 
 }
 
 async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promise<"success" | "failed" | "cancelled"> {
-  const chat = createChat({ provider: agent.provider, model: agent.model, system: systemFor(agent, INBOX), tools: AGENT_TOOLS });
-  const ctx: ToolContext = { agent, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const tools = toolsForAgent(agent, { sandbox: false });
+  const chat = createChat({ provider: agent.provider, model: agent.model, system: systemFor(agent, INBOX), tools });
+  const ctx: ToolContext = { agent, runId, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const executor = new ToolExecutor(tools, ctx, { runId });
   const [agents, tasks, names] = await Promise.all([getAgents(), getTasks(), agentNames()]);
   const mine = tasks.filter((t) => t.ownerAgentId === agent.id && t.column !== "done");
   let input: { text?: string; toolOutputs?: ToolOutput[] } = {
@@ -508,31 +489,10 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
     if (!res.toolCalls.length) return "success";
 
     const outputs: ToolOutput[] = [];
-    for (const call of res.toolCalls) {
-      const tool = findTool(call.name);
-      if (!tool) {
-        outputs.push({ id: call.id, name: call.name, output: `Unknown tool ${call.name}`, isError: true });
-        continue;
-      }
-      try {
-        outputs.push({ id: call.id, name: call.name, output: JSON.stringify(await tool.run(call.args, ctx)).slice(0, 50_000) });
-      } catch (e) {
-        const known = e instanceof ToolInputError || e instanceof ConflictError;
-        if (!known) console.error(`[runner] tool ${call.name} failed`, e);
-        outputs.push({ id: call.id, name: call.name, output: known ? (e as Error).message : "Internal error", isError: true });
-      }
-      if (!QUIET_TOOLS.has(call.name)) {
-        await addEvent({ agentId: agent.id, runId, type: "tool_call", payload: { tool: call.name, input: shorten(call.args) } });
-      }
-    }
+    for (const call of res.toolCalls) outputs.push(await executor.run(call));
     input = { toolOutputs: outputs, text: control.note };
   }
   return "success";
-}
-
-function shorten(args: unknown): unknown {
-  const s = JSON.stringify(args ?? {});
-  return s.length > 1_000 ? `${s.slice(0, 1_000)}…` : args;
 }
 
 function sleep(ms: number): Promise<void> {
