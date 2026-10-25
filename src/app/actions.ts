@@ -120,6 +120,20 @@ export async function deleteNoteAction(noteId: string) {
   await data.deleteNote(noteId);
 }
 
+const MemoryInput = z.object({
+  title: z.string().trim().min(1, "Give it a title").max(200),
+  text: z.string().trim().min(1, "Write something").max(5_000),
+});
+
+/** You can teach an agent directly: this goes into its own memory, as if it had saved it. */
+export async function saveAgentMemoryAction(agentId: string, input: z.input<typeof MemoryInput>) {
+  await data.rememberForAgent({ agentId, ...MemoryInput.parse(input) });
+}
+
+export async function deleteAgentMemoryAction(agentId: string, memoryId: string) {
+  await data.forgetAgentMemory(agentId, { id: memoryId });
+}
+
 export async function deleteAgentAction(agentId: string) {
   await data.deleteAgent(agentId);
 }

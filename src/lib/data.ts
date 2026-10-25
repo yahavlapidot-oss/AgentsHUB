@@ -11,6 +11,7 @@ import { boardLink, notifyByEmail } from "./notify";
 import { getBlobStore } from "./storage";
 import { generateAgentToken, hashToken } from "./tokens";
 import {
+  agentMemories,
   agents,
   approvals,
   artifacts,
@@ -22,6 +23,7 @@ import {
   sandboxes,
   tasks,
   type Agent,
+  type AgentMemory,
   type Artifact,
   type ArtifactInfo,
   type ArtifactKind,
@@ -224,6 +226,7 @@ export async function setAgentSandbox(agentId: string, enabled: boolean): Promis
 
 export async function deleteAgent(agentId: string): Promise<void> {
   await db.update(tasks).set({ ownerAgentId: null }).where(eq(tasks.ownerAgentId, agentId));
+  await db.delete(agentMemories).where(eq(agentMemories.agentId, agentId));
   await db.delete(agents).where(eq(agents.id, agentId));
 }
 
@@ -484,6 +487,40 @@ export async function writeNote(input: {
 
 export async function deleteNote(id: string): Promise<void> {
   await db.delete(notes).where(eq(notes.id, id));
+}
+
+// ---------------------------------------------------------------- an agent's own memory
+
+export const MAX_AGENT_MEMORIES = Number(process.env.AGENT_MAX_MEMORIES ?? 200);
+
+export async function getAgentMemories(agentId: string): Promise<AgentMemory[]> {
+  return db.select().from(agentMemories).where(eq(agentMemories.agentId, agentId)).orderBy(desc(agentMemories.updatedAt));
+}
+
+/** Creates the memory, or replaces the text of the agent's memory with the same title. */
+export async function rememberForAgent(input: { agentId: string; title: string; text: string; taskId?: string | null }): Promise<AgentMemory> {
+  const now = Date.now();
+  const existing = await getAgentMemories(input.agentId);
+  if (existing.length >= MAX_AGENT_MEMORIES && !existing.some((m) => m.title === input.title)) {
+    throw new ConflictError(`You already have ${MAX_AGENT_MEMORIES} memories. Forget or merge old ones first.`);
+  }
+  const [row] = await db
+    .insert(agentMemories)
+    .values({ id: newId("mem"), agentId: input.agentId, title: input.title, text: input.text, taskId: input.taskId ?? null, createdAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [agentMemories.agentId, agentMemories.title],
+      set: { text: input.text, taskId: input.taskId ?? null, updatedAt: now },
+    })
+    .returning();
+  return row;
+}
+
+/** Removes one memory, by title (the agent) or by id (the user). Only ever the agent's own. */
+export async function forgetAgentMemory(agentId: string, by: { title?: string; id?: string }): Promise<boolean> {
+  const match = by.id ? eq(agentMemories.id, by.id) : by.title ? eq(agentMemories.title, by.title) : undefined;
+  if (!match) return false;
+  const rows = await db.delete(agentMemories).where(and(eq(agentMemories.agentId, agentId), match)).returning({ id: agentMemories.id });
+  return rows.length > 0;
 }
 
 // ---------------------------------------------------------------- runs & usage

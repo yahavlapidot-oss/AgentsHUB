@@ -13,6 +13,8 @@ import {
   ArtifactError,
   claimTask,
   createTask,
+  forgetAgentMemory,
+  getAgentMemories,
   getAgents,
   getArtifacts,
   getEvents,
@@ -23,12 +25,14 @@ import {
   getTasks,
   heartbeat,
   postMessage,
+  rememberForAgent,
   reportProgress,
   saveArtifact,
   setArtifactStatus,
   takePendingCommands,
   writeNote,
 } from "./data";
+import { MEMORY_SOURCES, searchMemory } from "./memory";
 import { boardLink, notifyByEmail } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
 import type { SandboxSession } from "./sandbox/session";
@@ -294,6 +298,68 @@ export const AGENT_TOOLS: AgentTool[] = [
       return {
         notes: notes.slice(0, 50).map((n) => ({ title: n.title, text: n.text, author: n.authorAgentId ?? "user", updatedAt: n.updatedAt })),
       };
+    },
+  }),
+
+  tool({
+    name: "remember",
+    description:
+      "Save something for yourself to remember in later tasks: how your user likes things done, a lesson from a mistake, a convention you follow. Only you see it. Things the whole team needs go in write_note instead. Writing to an existing title replaces it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: str("Short, specific title, e.g. 'User wants tests with every change'"),
+        text: str("What to remember"),
+        taskId: str("Related task id (optional)"),
+      },
+      required: ["title", "text"],
+    },
+    args: z.object({ title: z.string().trim().min(1).max(200), text: z.string().min(1).max(5_000), taskId: z.string().optional() }),
+    run: async ({ title, text, taskId }, ctx) => {
+      const m = await rememberForAgent({ agentId: ctx.agent.id, title, text, taskId: taskId || ctx.taskId || null });
+      return { memory: { id: m.id, title: m.title, updatedAt: m.updatedAt } };
+    },
+  }),
+
+  tool({
+    name: "forget",
+    description: "Delete one of your own memories that is wrong or no longer holds, by its title.",
+    inputSchema: { type: "object", properties: { title: str("The memory's exact title") }, required: ["title"] },
+    args: z.object({ title: z.string().trim().min(1) }),
+    run: async ({ title }, { agent }) => {
+      if (!(await forgetAgentMemory(agent.id, { title }))) {
+        const titles = (await getAgentMemories(agent.id)).map((m) => m.title);
+        throw new ToolInputError(`No memory titled "${title}". Yours: ${titles.join("; ") || "none"}`);
+      }
+      return { forgotten: title };
+    },
+  }),
+
+  tool({
+    name: "search_memory",
+    description:
+      "Search what the team remembers: team notes, your own memories, results of finished tasks, and your messages. Use it before starting work that may have been done or decided before. Returns the best matches with a short snippet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: str("What you're looking for, in a few words"),
+        sources: {
+          type: "array",
+          items: { type: "string", enum: [...MEMORY_SOURCES] },
+          description: "Limit the search to some sources (optional)",
+        },
+        limit: { type: "number", description: "How many results, up to 20 (default 8)" },
+      },
+      required: ["query"],
+    },
+    args: z.object({
+      query: z.string().trim().min(1).max(500),
+      sources: z.array(z.enum(MEMORY_SOURCES)).min(1).optional(),
+      limit: z.number().int().min(1).max(20).optional(),
+    }),
+    run: async ({ query, sources, limit }, { agent }) => {
+      const hits = await searchMemory(agent.id, query, { sources, limit: limit ?? 8 });
+      return { results: hits, ...(hits.length ? {} : { hint: "Nothing matched. Try other words, or fewer of them." }) };
     },
   }),
 

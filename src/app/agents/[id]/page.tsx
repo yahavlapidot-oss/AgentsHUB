@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AgentControls } from "@/components/agents/agent-controls";
+import { AgentMemoryCard } from "@/components/agents/agent-memory";
 import { AgentTimeline } from "@/components/agents/agent-timeline";
 import { AgentTools, type AgentToolRow } from "@/components/agents/agent-tools";
 import { ALL_TOOLS, CATEGORY_LABELS, TOOL_CATEGORIES, toolInfo } from "@/lib/tool-hub";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { AgentAvatar, ProviderTag } from "@/components/ui";
 import { sandboxesAvailable } from "@/lib/sandbox/provider";
-import { getAgent, getCommands, getEvents, getRuns, getTasks } from "@/lib/data";
+import { getAgent, getAgentMemories, getCommands, getEvents, getRuns, getTasks } from "@/lib/data";
 import { AGENT_STATUS_META, COLUMN_META, compact, timeAgo, usd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +17,12 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   const agent = await getAgent(id);
   if (!agent) notFound();
-  const [events, runs, commands, tasks] = await Promise.all([
+  const [events, runs, commands, tasks, memories] = await Promise.all([
     getEvents({ agentId: id, limit: 80 }),
     getRuns({ agentId: id, limit: 30 }),
     getCommands(id),
     getTasks(),
+    getAgentMemories(id),
   ]);
   const mine = tasks.filter((t) => t.ownerAgentId === id);
   const status = AGENT_STATUS_META[agent.status];
@@ -92,6 +94,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
               <p className="px-4 py-6 text-sm text-ink-soft">No tasks assigned. Assign one from the board.</p>
             )}
           </section>
+          <AgentMemoryCard agentId={agent.id} memories={memories} />
           <AgentTools agentId={agent.id} groups={toolGroups(agent)} sandboxOn={agent.kind === "hosted" && agent.sandboxEnabled} />
           <section className="card">
             <h2 className="border-b border-line px-4 py-3 font-semibold">Activity</h2>
