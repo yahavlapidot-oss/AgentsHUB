@@ -3,7 +3,16 @@
  * PreToolUse hook, MCP clients (via /api/v1/policy/check) and hosted agents all
  * call `gateAction`. It answers allow, ask (wait for the user), deny or paused.
  */
-import { consumeApproval, findOpenApproval, getAgent, requestApproval } from "./data";
+import {
+  approvalTooOld,
+  consumeApproval,
+  expireApproval,
+  expireApprovals,
+  findOpenApproval,
+  getAgent,
+  getEmergencyStop,
+  requestApproval,
+} from "./data";
 import { evaluatePolicy, riskFor, type PolicyCategory } from "./policy";
 import type { Approval } from "./schema";
 
@@ -20,33 +29,55 @@ export type GateResult =
  */
 export async function gateAction(
   agentId: string,
-  input: { action: string; taskId?: string | null; reason?: string; force?: boolean; ignore?: PolicyCategory[] },
+  input: {
+    action: string;
+    taskId?: string | null;
+    reason?: string;
+    /** Where it happens and what goes out, shown to you on the Approvals page. */
+    service?: string;
+    details?: string;
+    force?: boolean;
+    ignore?: PolicyCategory[];
+    /** Ask even for an action the policy allows when the agent is set to "cautious". */
+    askIfCautious?: boolean;
+  },
 ): Promise<GateResult> {
   const agent = await getAgent(agentId);
   // `ignore` drops rules that don't apply where the action runs, e.g. deleting files inside a throwaway sandbox.
   const policy = evaluatePolicy(input.action, { ignore: input.ignore });
   const base = { categories: policy.categories, reasons: policy.reasons };
-  if (agent?.status === "paused") return { decision: "paused", ...base };
-  if (!policy.requiresApproval && !input.force) return { decision: "allow", ...base };
+  // The emergency stop holds every agent, whatever it was about to do.
+  if (agent?.status === "paused" || (await getEmergencyStop())) return { decision: "paused", ...base };
+  const cautious = Boolean(input.askIfCautious && agent?.autonomy === "cautious");
+  if (!policy.requiresApproval && !input.force && !cautious) return { decision: "allow", ...base };
 
+  await expireApprovals();
   const action = input.action.slice(0, 500);
-  const open = await findOpenApproval(agentId, action);
+  let open = await findOpenApproval(agentId, action);
+  if (open && approvalTooOld(open)) {
+    // Your OK was for then; after this long the agent has to ask again.
+    await expireApproval(open.id);
+    open = null;
+  }
   if (open?.decision === "approved") {
     await consumeApproval(open.id);
     return { decision: "allow", ...base, approval: open };
   }
-  if (open?.decision === "denied") {
+  if (open?.decision === "denied" || open?.decision === "expired") {
     await consumeApproval(open.id);
-    return { decision: "deny", ...base, approval: open };
+    const reasons = open.decision === "expired" ? ["nobody decided in time, so the request expired"] : base.reasons;
+    return { decision: "deny", categories: base.categories, reasons, approval: open };
   }
   if (open) return { decision: "ask", ...base, approval: open };
 
+  const why = policy.reasons.length ? policy.reasons.join(", ") : cautious ? "this agent is set to ask before every command" : "the agent asked";
   const approval = await requestApproval(agentId, {
     taskId: input.taskId ?? agent?.currentTaskId ?? null,
     action,
-    reason: input.reason || `Needs your OK: ${policy.reasons.join(", ") || "the agent asked"}`,
-    risk: input.force && !policy.categories.length ? "medium" : riskFor(policy.categories),
+    reason: input.reason || `Needs your OK: ${why}`,
+    service: input.service || policy.services.join(", "),
+    details: input.details,
+    risk: (input.force || cautious) && !policy.categories.length ? "medium" : riskFor(policy.categories),
   });
   return { decision: "ask", ...base, approval };
 }
-

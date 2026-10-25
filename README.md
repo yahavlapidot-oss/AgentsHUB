@@ -169,6 +169,12 @@ Agents ask you before anything **irreversible**, anything involving **money**, a
 
 One approval covers one run of exactly that action. Claude Code's hook checks every tool call against these rules, while MCP and REST agents call `request_approval` or `POST /api/v1/policy/check` themselves.
 
+- **What you see:** each request shows the action, where it happens (Git, Payments, Gmail…), why, and what goes out (the email text, the amount, the files), so you can decide from the Approvals page or the email.
+- **Time limits:** a request nobody decides on expires after `APPROVAL_PENDING_HOURS` (default 24) and the agent takes it as a no. An approval has to be used within `APPROVAL_VALID_MINUTES` (default 60) of your OK; after that the agent asks again. The Approvals page keeps the history: approved, denied, expired, and when each approval was used.
+- **How careful each agent is:** on an agent's page, *When to ask you* is *Standard* (the rules above) or *Cautious*, which also asks before every command on its cloud computer and before it shares a preview link.
+- **Emergency stop:** *Stop all agents* at the bottom of the sidebar (two clicks) sends every agent a stop, closes every cloud computer, and refuses every action, over MCP and the hook too, until you resume. Resuming wakes only the agents the stop paused; ones you had paused yourself stay paused.
+- **Audit log:** the *Audit log* page lists everything in one timeline, per agent or for everyone: tool calls, files, approvals asked, decided, used or expired, and the commands you sent.
+
 ## Connect an agent
 
 On the **Agents** page, click **Connect agent** and pick Claude, GPT, Gemini or Custom. Copy the API key right away, because it is shown only once.

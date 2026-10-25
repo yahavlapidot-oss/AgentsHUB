@@ -52,6 +52,7 @@ export const SANDBOX_TOOLS: AgentTool[] = [
         action: `Sandbox: ${command}`,
         taskId: ctx.taskId,
         ignore: ["irreversible"],
+        askIfCautious: true,
       });
       const result = gate.decision === "ask" && ctx.waitForApproval ? await ctx.waitForApproval(gate) : gate;
       if (result.decision !== "allow") {
@@ -127,12 +128,16 @@ export const SANDBOX_TOOLS: AgentTool[] = [
     description: "Public https address of a port in your cloud computer, so the user can open a dev server you started. It stops working when the task ends; save the files with save_artifact too.",
     inputSchema: { type: "object", properties: { port: { type: "number", description: "Port the server listens on" } }, required: ["port"] },
     args: z.object({ port: z.number().int().min(1).max(65_535) }),
-    run: async ({ port }, ctx) =>
-      asToolError(async () => {
+    run: async ({ port }, ctx) => {
+      const gate = await gateAction(ctx.agent.id, { action: `Share a public preview link to port ${port}`, taskId: ctx.taskId, askIfCautious: true });
+      const result = gate.decision === "ask" && ctx.waitForApproval ? await ctx.waitForApproval(gate) : gate;
+      if (result.decision !== "allow") return { shared: false, decision: result.decision, reason: result.reasons.join(", ") || "The user didn't approve sharing a link" };
+      return asToolError(async () => {
         const url = await session(ctx).previewUrl(port);
         await log(ctx, { tool: "preview_url", input: { port }, text: `Preview: ${url}` });
         return { url };
-      }),
+      });
+    },
   }),
 ];
 
