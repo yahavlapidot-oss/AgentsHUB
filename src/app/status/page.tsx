@@ -26,7 +26,7 @@ export default async function StatusPage() {
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: COLOR[c.state] }} />
                 <span className="w-36 font-medium">{c.name}</span>
                 <span className="text-xs font-medium" style={{ color: COLOR[c.state] === "#c4c4c4" ? "#676879" : COLOR[c.state] }}>{LABEL[c.state]}</span>
-                <span className="min-w-0 flex-1 text-sm text-ink-soft">{c.detail}</span>
+                <span className="min-w-0 flex-1 break-words text-sm text-ink-soft [overflow-wrap:anywhere]">{c.detail}</span>
               </li>
             ))}
           </ul>

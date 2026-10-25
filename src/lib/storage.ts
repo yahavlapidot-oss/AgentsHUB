@@ -4,6 +4,8 @@
  * bucket instead, e.g. a Railway bucket; the database then keeps only the
  * metadata and the object key. Files saved before the switch stay readable.
  */
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { AwsClient } from "aws4fetch";
 
 export interface BlobStore {
@@ -30,12 +32,17 @@ class S3Store implements BlobStore {
   }
 
   async put(key: string, bytes: Buffer, contentType: string): Promise<void> {
-    const res = await this.client.fetch(this.url(key), {
+    // Signed with aws4fetch but sent with node's own client: fetch can turn the
+    // signed request's body into a stream and drop Content-Length, which S3 refuses (411).
+    const signed = await this.client.sign(this.url(key), {
       method: "PUT",
       body: new Uint8Array(bytes),
       headers: { "content-type": contentType },
     });
-    if (!res.ok) throw new Error(`Storage upload failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    const headers: Record<string, string> = Object.fromEntries(signed.headers);
+    headers["content-length"] = String(bytes.length);
+    const { status, text } = await send(signed.url, headers, bytes);
+    if (status < 200 || status >= 300) throw new Error(`Storage upload failed (${status}): ${shortError(text)}`);
   }
 
   async get(key: string): Promise<Buffer> {
@@ -43,6 +50,28 @@ class S3Store implements BlobStore {
     if (!res.ok) throw new Error(`Storage download failed (${res.status})`);
     return Buffer.from(await res.arrayBuffer());
   }
+}
+
+function send(url: string, headers: Record<string, string>, body: Buffer): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = (url.startsWith("https:") ? httpsRequest : httpRequest)(url, { method: "PUT", headers, timeout: 60_000 }, (res) => {
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", (c) => (text += c));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+    });
+    req.on("timeout", () => req.destroy(new Error("Storage upload timed out")));
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+/** "MissingContentLength: You must provide…" instead of the whole XML reply. */
+export function shortError(xml: string): string {
+  const code = /<Code>([^<]*)<\/Code>/.exec(xml)?.[1];
+  const message = /<Message>([^<]*)<\/Message>/.exec(xml)?.[1];
+  if (code || message) return [code, message].filter(Boolean).join(": ");
+  return xml.slice(0, 200);
 }
 
 export function objectUrl(endpoint: string, bucket: string, key: string, style: "path" | "virtual"): string {
