@@ -41,7 +41,7 @@ export function Board() {
       />
       <Summary />
 
-      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-6 py-2">
+      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-4 sm:px-6 py-2">
         <div role="tablist" className="flex gap-1">
           {(["table", "kanban"] as const).map((v) => (
             <button
@@ -58,15 +58,15 @@ export function Board() {
             </button>
           ))}
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
           <input
             id="board-search"
-            className="input w-48"
+            className="input w-full sm:w-48"
             placeholder="Search tasks"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="flex items-center gap-1" aria-label="Filter by agent">
+          <div className="-mx-1 flex max-w-full items-center gap-1 overflow-x-auto px-1 py-0.5 sm:max-w-md" aria-label="Filter by agent">
             <FilterChip active={agentFilter === "all"} onClick={() => setAgentFilter("all")}>
               All
             </FilterChip>
@@ -75,7 +75,7 @@ export function Board() {
                 key={a.id}
                 type="button"
                 onClick={() => setAgentFilter(agentFilter === a.id ? "all" : a.id)}
-                className={`rounded-full p-0.5 ${agentFilter === a.id ? "ring-2 ring-brand" : "opacity-80 hover:opacity-100"}`}
+                className={`shrink-0 rounded-full p-0.5 ${agentFilter === a.id ? "ring-2 ring-brand" : "opacity-80 hover:opacity-100"}`}
                 aria-pressed={agentFilter === a.id}
                 aria-label={`Only ${a.name}`}
               >
@@ -89,7 +89,7 @@ export function Board() {
         </div>
       </div>
 
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         {view === "table" ? (
           <TableView tasks={visible} onOpen={setOpenTaskId} onCreate={() => setCreating(true)} />
         ) : (
@@ -109,7 +109,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+      className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${
         active ? "bg-brand-soft text-brand" : "text-ink-soft hover:bg-black/5"
       }`}
     >
@@ -135,7 +135,7 @@ function Summary() {
   return (
     <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-5">
       {stats.map((s, i) => (
-        <div key={s.label} className={`bg-white px-6 py-3 ${i === stats.length - 1 ? "col-span-2 sm:col-span-1" : ""}`}>
+        <div key={s.label} className={`bg-white px-4 py-2 sm:px-6 sm:py-3 ${i === stats.length - 1 ? "hidden sm:block" : ""}`}>
           <p className="text-xs text-ink-faint">{s.label}</p>
           <p
             className={`mt-0.5 text-xl font-semibold tabular-nums ${

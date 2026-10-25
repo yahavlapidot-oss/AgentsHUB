@@ -71,5 +71,5 @@ function clientIp(req: NextRequest): string {
 }
 
 export const config = {
-  matcher: ["/((?!api/v1|api/mcp|api/health|agentshub-hook\\.mjs|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api/v1|api/mcp|api/health|agentshub-hook\\.mjs|manifest\\.webmanifest|icon\\.svg|icon-192\\.png|icon-512\\.png|apple-icon\\.png|_next/static|_next/image|favicon.ico).*)"],
 };

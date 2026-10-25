@@ -1,17 +1,18 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { EmergencyStopButton } from "./emergency-stop";
 import { useLive } from "./live";
 
-export function Sidebar() {
-  const path = usePathname();
+export type NavItem = { href: string; label: string; icon: string; badge?: string; alert?: number };
+
+/** Every page, in sidebar order. Shared by the sidebar and the phone menu. */
+export function useNavItems(): NavItem[] {
   const { approvals, agents } = useLive();
   const online = agents.filter((a) => a.status !== "offline").length;
   const working = agents.filter((a) => a.currentTaskId && a.status !== "offline").length;
-
-  const items = [
+  return [
     { href: "/", label: "Main board", icon: "▦" },
     { href: "/projects", label: "Projects", icon: "◫" },
     { href: "/live", label: "Live workspace", icon: "▶", badge: working ? String(working) : undefined },
@@ -24,9 +25,19 @@ export function Sidebar() {
     { href: "/audit", label: "Audit log", icon: "☰" },
     { href: "/status", label: "System status", icon: "♥" },
   ];
+}
+
+export function isActive(path: string, href: string): boolean {
+  return href === "/" ? path === "/" : path.startsWith(href);
+}
+
+/** The dark sidebar on tablets and computers. Phones get <MobileNav> instead. */
+export function Sidebar() {
+  const path = usePathname();
+  const items = useNavItems();
 
   return (
-    <nav className="sticky top-0 flex h-screen w-14 shrink-0 flex-col bg-nav text-white/80 md:w-60">
+    <nav className="sticky top-0 hidden h-screen w-14 shrink-0 flex-col bg-nav text-white/80 sm:flex md:w-60">
       <div className="flex items-center gap-2 px-4 py-5">
         <span className="grid h-8 w-8 place-items-center rounded-md bg-brand text-sm font-bold text-white">A</span>
         <span className="hidden text-base font-semibold text-white md:inline">AgentsHUB</span>
@@ -36,15 +47,16 @@ export function Sidebar() {
       </p>
       <ul className="flex flex-col gap-0.5 px-2">
         {items.map((it) => {
-          const active = it.href === "/" ? path === "/" : path.startsWith(it.href);
+          const active = isActive(path, it.href);
           return (
             <li key={it.href}>
               <Link
                 href={it.href}
-                className={`flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors ${
+                className={`relative flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors ${
                   active ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
+                <LinkPending className="inset-y-1.5 left-0 w-0.5" />
                 <span className="w-5 text-center text-base leading-none" aria-hidden>
                   {it.icon}
                 </span>
@@ -63,4 +75,11 @@ export function Sidebar() {
       </div>
     </nav>
   );
+}
+
+/** A small bar on a nav link from the moment it's clicked until its page shows. Put it inside a relative Link. */
+export function LinkPending({ className }: { className: string }) {
+  const { pending } = useLinkStatus();
+  if (!pending) return null;
+  return <span aria-hidden className={`pointer-events-none absolute animate-fade-in-late rounded-full bg-brand ${className}`} />;
 }

@@ -25,7 +25,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   return (
     <div>
       <RefreshOnTick />
-      <header className="border-b border-line bg-white px-6 py-5">
+      <header className="border-b border-line bg-white px-4 sm:px-6 py-5">
         <Link href="/projects" className="text-sm text-ink-soft hover:text-ink">← Projects</Link>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">{project.name}</h1>
@@ -46,7 +46,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             `models ${usd(spent.models)} · cloud computers ${usd(spent.computers)}`,
           ],
         ].map(([k, v, sub]) => (
-          <div key={k} className="bg-white px-6 py-3">
+          <div key={k} className="bg-white px-4 sm:px-6 py-3">
             <p className="text-xs text-ink-faint">{k}</p>
             <p className={`mt-0.5 font-mono text-xl font-semibold tabular-nums ${k.startsWith("Spent") && over ? "text-[#d83a52]" : ""}`}>{v}</p>
             {sub && <p className="text-xs text-ink-faint">{sub}</p>}
@@ -54,7 +54,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         ))}
       </div>
 
-      <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-w-0 flex-col gap-6">
           <section className="card">
             <h2 className="border-b border-line px-4 py-3 font-semibold">Tasks</h2>

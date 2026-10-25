@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { decideApprovalAction } from "@/app/actions";
+import { useState } from "react";
 import { timeAgo } from "@/lib/format";
 import type { Approval } from "@/lib/schema";
 import { useLive } from "./live";
@@ -21,14 +21,17 @@ function timeUntil(at: number): string {
 }
 
 export function ApprovalsList({ approvals, pendingHours, validMinutes }: { approvals: Approval[]; pendingHours: number; validMinutes: number }) {
-  const { agents, tasks, refresh } = useLive();
+  const { agents, tasks, decideApproval } = useLive();
   const router = useRouter();
-  const pending = approvals.filter((a) => a.decision === "pending");
+  // Decided here but not yet in the page's list from the server.
+  const [decidedNow, setDecidedNow] = useState<Set<string>>(new Set());
+  const pending = approvals.filter((a) => a.decision === "pending" && !decidedNow.has(a.id));
   const decided = approvals.filter((a) => a.decision !== "pending").slice(0, 100);
 
   async function decide(id: string, d: "approved" | "denied") {
-    await decideApprovalAction(id, d);
-    await refresh();
+    setDecidedNow((s) => new Set(s).add(id));
+    const ok = await decideApproval(id, d);
+    if (!ok) setDecidedNow((s) => { const n = new Set(s); n.delete(id); return n; });
     router.refresh();
   }
 
@@ -65,9 +68,9 @@ export function ApprovalsList({ approvals, pendingHours, validMinutes }: { appro
                       {agent?.name ?? "Agent"} · {a.risk} risk{task ? ` · ${task.title}` : ""} · {timeAgo(a.createdAt)} · expires {timeUntil(a.createdAt + pendingHours * 3_600_000)}
                     </p>
                   </div>
-                  <div className="flex gap-2">
-                    <button type="button" className="btn-ghost border border-line" onClick={() => decide(a.id, "denied")}>Deny</button>
-                    <button type="button" className="btn-primary" onClick={() => decide(a.id, "approved")}>Approve</button>
+                  <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                    <button type="button" className="btn-ghost justify-center border border-line" onClick={() => decide(a.id, "denied")}>Deny</button>
+                    <button type="button" className="btn-primary justify-center" onClick={() => decide(a.id, "approved")}>Approve</button>
                   </div>
                 </li>
               );

@@ -17,13 +17,20 @@ type LiveData = { runs: LiveRun[]; idle: PublicAgent[]; generatedAt: number };
 export function LiveWorkspace({ initial }: { initial: LiveData }) {
   const [data, setData] = useState(initial);
   const inFlight = useRef(false);
+  const etag = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      const res = await fetch("/api/ui/live", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      // 304 when nothing changed: no download and no re-render.
+      const res = await fetch("/api/ui/live", { cache: "no-store", headers: etag.current ? { "if-none-match": etag.current } : {} });
+      if (res.status === 200) {
+        etag.current = res.headers.get("etag");
+        setData(await res.json());
+      }
+    } catch {
+      // Offline for a moment: the next poll tries again.
     } finally {
       inFlight.current = false;
     }
@@ -33,7 +40,12 @@ export function LiveWorkspace({ initial }: { initial: LiveData }) {
     const id = setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, POLL_MS);
-    return () => clearInterval(id);
+    const onShow = () => document.visibilityState === "visible" && void refresh();
+    document.addEventListener("visibilitychange", onShow);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onShow);
+    };
   }, [refresh]);
 
   return (

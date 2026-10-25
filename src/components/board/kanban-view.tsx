@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { updateTaskAction } from "@/app/actions";
 import { COLUMN_META, PRIORITY_META, timeAgo } from "@/lib/format";
 import { COLUMNS, type Column, type Task } from "@/lib/schema";
 import { useLive } from "../live";
@@ -9,7 +8,7 @@ import { AgentAvatar, ProgressBar } from "../ui";
 
 /** Drag cards between columns to change their status. */
 export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
-  const { agents, refresh } = useLive();
+  const { agents, updateTask } = useLive();
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<Column | null>(null);
 
@@ -19,12 +18,11 @@ export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: stri
     setOver(null);
     const task = tasks.find((t) => t.id === id);
     if (!task || task.column === col) return;
-    await updateTaskAction(task.id, { column: col });
-    await refresh();
+    await updateTask(task.id, { column: col }, `Moved to ${COLUMN_META[col].label}`);
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
+    <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:mx-0 sm:snap-none sm:gap-4 sm:px-0">
       {COLUMNS.map((col) => {
         const meta = COLUMN_META[col];
         const cards = tasks.filter((t) => t.column === col);
@@ -37,7 +35,7 @@ export function KanbanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: stri
             }}
             onDragLeave={() => setOver((o) => (o === col ? null : o))}
             onDrop={() => drop(col)}
-            className={`flex w-72 shrink-0 flex-col rounded-lg bg-[#eceff4] transition-shadow ${
+            className={`flex w-[85vw] max-w-72 shrink-0 snap-start flex-col rounded-lg sm:w-72 bg-[#eceff4] transition-shadow ${
               over === col ? "ring-2 ring-brand" : ""
             }`}
           >

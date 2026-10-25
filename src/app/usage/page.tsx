@@ -32,7 +32,7 @@ export default async function UsagePage() {
     <div>
       <RefreshOnTick />
       <PageHeader title="Usage & costs" subtitle="What your agents spend on models and cloud computers, and the caps that stop them." />
-      <section className="border-b border-line bg-white px-6 py-4">
+      <section className="border-b border-line bg-white px-4 sm:px-6 py-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
             <p className="text-xs text-ink-faint">This month</p>
@@ -67,13 +67,13 @@ export default async function UsagePage() {
           ["All-time cost", usd(allTime.total)],
           ["Runs", String(total.runs)],
         ].map(([k, v]) => (
-          <div key={k} className="bg-white px-6 py-3">
+          <div key={k} className="bg-white px-4 sm:px-6 py-3">
             <p className="text-xs text-ink-faint">{k}</p>
             <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{v}</p>
           </div>
         ))}
       </div>
-      <div className="grid gap-6 p-6 lg:grid-cols-2">
+      <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <UsageBars
           title="By agent"
           rows={byAgent}
@@ -97,8 +97,8 @@ export default async function UsagePage() {
             <thead className="text-left text-xs text-ink-faint">
               <tr>
                 <th className="px-4 py-2 font-medium">Project</th>
-                <th className="px-4 py-2 text-right font-medium">Models</th>
-                <th className="px-4 py-2 text-right font-medium">Cloud computers</th>
+                <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Models</th>
+                <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Cloud computers</th>
                 <th className="px-4 py-2 text-right font-medium">Total</th>
                 <th className="px-4 py-2 text-right font-medium">Budget</th>
               </tr>
@@ -110,8 +110,8 @@ export default async function UsagePage() {
                 return (
                   <tr key={p.id} className="border-t border-line">
                     <td className="px-4 py-2"><Link href={`/projects/${p.id}`} className="hover:underline">{p.name}</Link></td>
-                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(s.models)}</td>
-                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(s.computers)}</td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs tabular-nums sm:table-cell">{usd(s.models)}</td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs tabular-nums sm:table-cell">{usd(s.computers)}</td>
                     <td className={`px-4 py-2 text-right font-mono text-xs tabular-nums ${over ? "text-[#d83a52]" : ""}`}>{usd(s.total)}</td>
                     <td className="px-4 py-2 text-right font-mono text-xs tabular-nums text-ink-soft">{p.budgetUsd != null ? usd(p.budgetUsd) : "none"}</td>
                   </tr>
@@ -124,8 +124,8 @@ export default async function UsagePage() {
                 return (
                   <tr className="border-t border-line text-ink-soft">
                     <td className="px-4 py-2">No project</td>
-                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(models)}</td>
-                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(computers)}</td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs tabular-nums sm:table-cell">{usd(models)}</td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs tabular-nums sm:table-cell">{usd(computers)}</td>
                     <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(models + computers)}</td>
                     <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{month.cap != null ? "monthly cap" : "none"}</td>
                   </tr>
@@ -141,9 +141,9 @@ export default async function UsagePage() {
               <thead className="text-left text-xs text-ink-faint">
                 <tr>
                   <th className="px-4 py-2 font-medium">Agent</th>
-                  <th className="px-4 py-2 font-medium">Model</th>
-                  <th className="px-4 py-2 text-right font-medium">Tokens in</th>
-                  <th className="px-4 py-2 text-right font-medium">Tokens out</th>
+                  <th className="hidden px-4 py-2 font-medium sm:table-cell">Model</th>
+                  <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Tokens in</th>
+                  <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Tokens out</th>
                   <th className="px-4 py-2 text-right font-medium">Cost</th>
                   <th className="px-4 py-2 font-medium">When</th>
                 </tr>
@@ -155,13 +155,13 @@ export default async function UsagePage() {
                     <tr key={r.id} className="border-t border-line">
                       <td className="px-4 py-2">
                         <span className="flex items-center gap-2">
-                          {a && <ProviderTag provider={a.provider} />}
+                          {a && <span className="hidden sm:inline"><ProviderTag provider={a.provider} /></span>}
                           {a?.name ?? "Removed agent"}
                         </span>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs">{r.model}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{r.tokensIn.toLocaleString("en-US")}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{r.tokensOut.toLocaleString("en-US")}</td>
+                      <td className="hidden px-4 py-2 font-mono text-xs sm:table-cell">{r.model}</td>
+                      <td className="hidden px-4 py-2 text-right font-mono text-xs tabular-nums sm:table-cell">{r.tokensIn.toLocaleString("en-US")}</td>
+                      <td className="hidden px-4 py-2 text-right font-mono text-xs tabular-nums sm:table-cell">{r.tokensOut.toLocaleString("en-US")}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{usd(r.costUsd)}</td>
                       <td className="px-4 py-2 text-xs text-ink-soft">{timeAgo(r.startedAt)}</td>
                     </tr>
@@ -203,7 +203,7 @@ function UsageBars({
       {rows.length ? (
         <ul className="flex flex-col gap-3 p-4">
           {rows.map((r) => (
-            <li key={r.key} className="grid grid-cols-[minmax(0,140px)_1fr_auto] items-center gap-3 text-sm">
+            <li key={r.key} className="grid grid-cols-[minmax(0,110px)_1fr_auto] sm:grid-cols-[minmax(0,140px)_1fr_auto] items-center gap-3 text-sm">
               {label(r.key)}
               <div className="flex h-3 overflow-hidden rounded-full bg-canvas" title={`${r.tokensIn.toLocaleString("en-US")} in · ${r.tokensOut.toLocaleString("en-US")} out`}>
                 <div className="bg-brand" style={{ width: `${(r.tokensIn / max) * 100}%` }} />

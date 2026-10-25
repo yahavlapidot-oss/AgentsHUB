@@ -100,7 +100,7 @@ export function ColorPicker<T extends string>({
         {meta.label}
       </button>
       {open && (
-        <div className="absolute left-1/2 top-full z-30 mt-1 w-44 -translate-x-1/2 rounded-lg border border-line bg-white p-2 shadow-xl">
+        <div className="absolute left-1/2 top-full z-30 mt-1 w-44 -translate-x-1/2 animate-fade-in rounded-lg border border-line bg-white p-2 shadow-xl">
           {(Object.keys(options) as T[]).map((k) => (
             <button
               key={k}
@@ -149,13 +149,13 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid animate-fade-in items-end bg-black/40 sm:place-items-center sm:p-4" onMouseDown={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onMouseDown={(e) => e.stopPropagation()}
-        className={`max-h-[90vh] w-full overflow-y-auto rounded-xl bg-white p-6 shadow-2xl ${wide ? "max-w-2xl" : "max-w-lg"}`}
+        className={`max-h-[92dvh] w-full animate-sheet-up overflow-y-auto overscroll-contain rounded-t-xl bg-white p-4 sm:animate-pop-in pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-xl sm:p-6 ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <h2 className="text-lg font-semibold">{title}</h2>
@@ -171,7 +171,7 @@ export function Modal({
 
 export function EmptyState({ title, hint, action }: { title: string; hint: string; action?: React.ReactNode }) {
   return (
-    <div className="card flex flex-col items-center gap-2 px-6 py-12 text-center">
+    <div className="card flex flex-col items-center gap-2 px-4 sm:px-6 py-12 text-center">
       <p className="font-medium">{title}</p>
       <p className="max-w-md text-sm text-ink-soft">{hint}</p>
       {action && <div className="mt-2">{action}</div>}
@@ -208,10 +208,11 @@ export function CopyBox({ text, label }: { text: string; label?: string }) {
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-3 border-b border-line bg-white px-6 py-5">
+    <header className="flex flex-wrap items-center justify-between sm:items-end gap-3 border-b border-line bg-white px-4 py-4 sm:px-6 sm:py-5">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-ink-soft">{subtitle}</p>}
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
+        {/* Phones keep the space for the content. */}
+        {subtitle && <p className="mt-1 hidden text-sm text-ink-soft sm:block">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </header>

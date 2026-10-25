@@ -13,7 +13,7 @@ import { OwnerPicker } from "./owner-picker";
 type Tab = "updates" | "activity" | "files" | "details";
 
 export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  const { tasks, agents, refresh, generatedAt } = useLive();
+  const { tasks, agents, updateTask, version } = useLive();
   const task = tasks.find((t) => t.id === taskId);
   const [tab, setTab] = useState<Tab>("updates");
   const [detail, setDetail] = useState<{ events: AgentEvent[]; messages: Message[]; artifacts: ArtifactInfo[] }>({
@@ -26,7 +26,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
   // Reload whenever the live snapshot ticks.
   useEffect(() => {
     void load();
-  }, [load, generatedAt]);
+  }, [load, version]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -37,19 +37,16 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
   if (!task) return null;
   const owner = agents.find((a) => a.id === task.ownerAgentId);
 
-  async function patch(p: Parameters<typeof updateTaskAction>[1]) {
-    await updateTaskAction(taskId, p);
-    await refresh();
-  }
+  const patch = (p: Parameters<typeof updateTaskAction>[1]) => updateTask(taskId, p);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-40 flex animate-fade-in justify-end bg-black/20" onMouseDown={onClose}>
       <aside
-        className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl"
+        className="flex h-full w-full max-w-xl animate-drawer-in flex-col bg-white pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
         aria-label={`Task: ${task.title}`}
       >
-        <div className="border-b border-line px-6 pb-3 pt-5">
+        <div className="border-b border-line px-4 sm:px-6 pb-3 pt-5">
           <div className="flex items-start justify-between gap-3">
             <h2 className="text-xl font-semibold leading-snug">{task.title}</h2>
             <button type="button" className="btn-ghost -mr-2 px-2" onClick={onClose} aria-label="Close">✕</button>
@@ -93,7 +90,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-canvas px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-canvas px-4 sm:px-6 py-4">
           {tab === "updates" && <Updates taskId={taskId} ownerId={task.ownerAgentId} messages={detail.messages} onSent={load} />}
           {tab === "activity" && <Activity events={detail.events} />}
           {tab === "files" && <ArtifactsList artifacts={detail.artifacts} onChange={load} />}
@@ -190,20 +187,16 @@ export function Activity({ events }: { events: AgentEvent[] }) {
 }
 
 function Details({ taskId }: { taskId: string }) {
-  const { tasks, projects, refresh } = useLive();
+  const { tasks, projects, updateTask } = useLive();
   const task = tasks.find((t) => t.id === taskId)!;
   const [description, setDescription] = useState(task.description);
   const [acceptance, setAcceptance] = useState(task.acceptanceCriteria);
-  const [saved, setSaved] = useState(false);
   const dirty = description !== task.description || acceptance !== task.acceptanceCriteria;
   const parent = task.parentTaskId ? tasks.find((t) => t.id === task.parentTaskId) : null;
   const deps = task.dependsOn.map((id) => tasks.find((t) => t.id === id)).filter(Boolean);
 
-  async function save() {
-    await updateTaskAction(taskId, { description, acceptanceCriteria: acceptance });
-    await refresh();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  function save() {
+    void updateTask(taskId, { description, acceptanceCriteria: acceptance }, "Saved");
   }
 
   return (
@@ -217,7 +210,6 @@ function Details({ taskId }: { taskId: string }) {
         <textarea id="td-acc" className="input min-h-16" value={acceptance} onChange={(e) => setAcceptance(e.target.value)} />
       </div>
       <div className="flex items-center justify-end gap-2">
-        {saved && <span className="text-sm text-[#00a35c]">Saved</span>}
         <button type="button" className="btn-primary" disabled={!dirty} onClick={save}>Save</button>
       </div>
       <dl className="card grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 p-4 text-sm">
@@ -227,10 +219,7 @@ function Details({ taskId }: { taskId: string }) {
             aria-label="Project"
             className="input py-1"
             value={task.projectId ?? ""}
-            onChange={async (e) => {
-              await updateTaskAction(taskId, { projectId: e.target.value || null });
-              await refresh();
-            }}
+            onChange={(e) => void updateTask(taskId, { projectId: e.target.value || null }, "Project changed")}
           >
             <option value="">No project</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
