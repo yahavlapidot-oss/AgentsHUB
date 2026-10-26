@@ -85,6 +85,34 @@
       "when": 1792970371686,
       "tag": "0011_project_lead_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1792972540457,
+      "tag": "0012_schedules",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1792973291786,
+      "tag": "0013_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792974061764,
+      "tag": "0014_task_rating",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1792974354506,
+      "tag": "0015_cost_savings",
+      "breakpoints": true
     }
   ]
 }

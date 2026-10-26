@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { setMonthlyCap } from "@/lib/budgets";
+import { HQ_CHANNEL } from "@/lib/hq";
 import * as data from "@/lib/data";
 import { diffLines, toHunks } from "@/lib/diff";
 import { cleanDisabledTools } from "@/lib/tool-hub";
@@ -82,6 +83,32 @@ export async function sendToLeadAction(projectId: string, input: z.input<typeof 
   }
   await data.postMessage({ fromAgentId: null, toAgentId: lead.id, projectId, taskId, text });
   return { taskId };
+}
+
+/** Writes to the chief of staff in the HQ chat. As a task, it goes to the chief to place and hand out. */
+export async function sendToChiefAction(input: z.input<typeof LeadMessage>) {
+  const { text, asTask, priority } = LeadMessage.parse(input);
+  const chiefId = await data.getChiefAgentId();
+  if (!chiefId) throw new Error("Pick your chief of staff first");
+  let taskId: string | null = null;
+  if (asTask) {
+    const [first, ...rest] = text.split("\n");
+    const task = await data.createTask({
+      title: first.trim().slice(0, 300),
+      description: rest.join("\n").trim(),
+      priority,
+      ownerAgentId: chiefId,
+      column: "ready",
+      createdBy: "user",
+    });
+    taskId = task.id;
+  }
+  await data.postMessage({ fromAgentId: null, toAgentId: chiefId, projectId: HQ_CHANNEL, taskId, text });
+  return { taskId };
+}
+
+export async function setChiefAction(agentId: string | null) {
+  await data.setChiefAgentId(agentId);
 }
 
 export async function setProjectLeadAction(projectId: string, agentId: string | null) {
@@ -240,4 +267,25 @@ export async function getTaskDetailAction(taskId: string) {
     data.getArtifacts({ taskId }),
   ]);
   return { events, messages, artifacts };
+}
+
+export async function rateTaskAction(taskId: string, rating: 1 | -1 | null, note = "") {
+  const { rateTask } = await import("@/lib/quality");
+  await rateTask(taskId, z.union([z.literal(1), z.literal(-1), z.null()]).parse(rating), z.string().max(2_000).parse(note));
+}
+
+export async function saveQualityAction(input: { reviewerAgentId: string | null; mode: string; maxRounds: number }) {
+  const { setQualitySettings, REVIEW_MODES } = await import("@/lib/quality");
+  await setQualitySettings({ reviewerAgentId: input.reviewerAgentId || null, mode: z.enum(REVIEW_MODES).parse(input.mode), maxRounds: z.number().int().min(1).max(5).parse(input.maxRounds) });
+}
+
+/** Makes this agent the reviewer, turning the check on for important tasks if it was off. */
+export async function makeReviewerAction(agentId: string) {
+  const { getQualitySettings, setQualitySettings } = await import("@/lib/quality");
+  const s = await getQualitySettings();
+  await setQualitySettings({ ...s, reviewerAgentId: agentId, mode: s.mode === "off" ? "important" : s.mode });
+}
+
+export async function setAgentCheapModelAction(agentId: string, model: string) {
+  await data.setAgentCheapModel(agentId, z.string().trim().max(100).regex(/^[\w.:/-]*$/).parse(model) || null);
 }

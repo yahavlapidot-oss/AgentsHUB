@@ -40,9 +40,11 @@ import {
   writeNote,
 } from "./data";
 import { MEMORY_SOURCES, searchMemory } from "./memory";
-import { boardLink, notifyByEmail } from "./notify";
+import { isReviewTask, maybeRequestReview } from "./quality";
+import { boardLink, notify } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
 import type { SandboxSession } from "./sandbox/session";
+import type { Taint } from "./untrusted";
 
 export type JsonSchema = {
   type: "object";
@@ -61,6 +63,10 @@ export type ToolContext = {
   projectId?: string | null;
   /** Hosted agents with a cloud computer. */
   sandbox?: SandboxSession;
+  /** Set once the run has read outside content; sending tools then ask first. */
+  taint?: Taint;
+  /** Where replies go when chatting outside a project, e.g. "hq" for the chief of staff's chat. */
+  chatChannel?: string | null;
 };
 
 export type AgentTool = {
@@ -300,7 +306,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       priority: z.enum(PRIORITIES).optional(),
       projectId: z.string().optional(),
     }),
-    run: async (input, { agent, projectId, taskId }) => {
+    run: async (input, { agent, projectId, taskId, chatChannel }) => {
       const task = await createTask({
         ...input,
         ownerAgentId: input.ownerAgentId || null,
@@ -308,9 +314,10 @@ export const AGENT_TOOLS: AgentTool[] = [
         column: "ready",
         createdBy: agent.id,
       });
-      // Tasks made while chatting show up in the project chat, where the user asked for them.
-      if (projectId && !taskId && task.projectId === projectId) {
-        await postMessage({ fromAgentId: agent.id, projectId, taskId: task.id, text: `New task: ${task.title}` });
+      // Tasks made while chatting show up in the chat where the user asked for them.
+      const chatAt = chatChannel ?? (projectId && task.projectId === projectId ? projectId : null);
+      if (chatAt && !taskId) {
+        await postMessage({ fromAgentId: agent.id, projectId: chatAt, taskId: task.id, text: `New task: ${task.title}` });
       }
       return { task: compactTask(task) };
     },
@@ -512,18 +519,28 @@ export const AGENT_TOOLS: AgentTool[] = [
     },
     args: z.object({ taskId: z.string(), summary: z.string().min(1).max(20_000) }),
     run: async ({ taskId, summary }, { agent }) => {
+      const current = await getTask(taskId);
+      // A review task closes on its own; the user sees the verdict on the reviewed task.
+      if (current && isReviewTask(current)) {
+        const done = await reportProgress(agent.id, taskId, { progressPct: 100, column: "done", note: summary });
+        await heartbeat(agent.id, { status: "active", currentTaskId: null });
+        return { task: done, hint: "Use review_verdict to approve or send back the reviewed task." };
+      }
       const task = await reportProgress(agent.id, taskId, { progressPct: 100, column: "review", note: summary });
       await heartbeat(agent.id, { status: "active", currentTaskId: null });
+      const review = task ? await maybeRequestReview(task, agent.id, summary) : null;
+      if (review) return { task, review: `Sent for review (${review.id}). If changes are needed, it comes back to you with the reviewer's notes.` };
       // Delivery report: the task's files go up for review with it.
       const files = await getArtifacts({ taskId, latestOnly: true });
       for (const f of files) if (f.status === "draft") await setArtifactStatus(f.id, "in_review");
       const fileLines = files.map((f) => `- ${f.path} (v${f.version}): ${boardLink(`/api/ui/artifacts/${f.id}`)}`);
       if (task) {
-        await notifyByEmail(
+        await notify(
           `[AgentsHUB] ${agent.name} finished "${task.title}"`,
           [summary.slice(0, 4_000), fileLines.length && `Files:\n${fileLines.join("\n")}`, `It's waiting for your review.\n${boardLink("/")}`]
             .filter(Boolean)
             .join("\n\n"),
+          { kind: "finished" },
         );
       }
       return { task, files: files.map((f) => ({ path: f.path, version: f.version })) };
@@ -606,7 +623,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         fromAgentId: ctx.agent.id,
         toAgentId: toAgentId || null,
         taskId: taskId || null,
-        projectId: projectId || ctx.projectId || null,
+        projectId: projectId || ctx.projectId || ctx.chatChannel || null,
         text,
       }),
     }),

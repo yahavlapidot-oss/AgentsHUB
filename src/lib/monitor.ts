@@ -3,7 +3,7 @@
  * Status page, and emailed (at most once per ALERT_EVERY_MS for each kind),
  * so a stuck runner or a failing database doesn't go unnoticed.
  */
-import { boardLink, notifyByEmail } from "./notify";
+import { boardLink, notify } from "./notify";
 
 export const ALERT_EVERY_MS = Number(process.env.ALERT_EVERY_MS ?? 30 * 60_000);
 const KEEP = 50;
@@ -27,7 +27,7 @@ export async function recordProblem(source: string, err: unknown, now = Date.now
   const last = alerted.get(source) ?? 0;
   if (now - last < ALERT_EVERY_MS) return;
   alerted.set(source, now);
-  await notifyByEmail(`[AgentsHUB] Server problem: ${source}`, `${message.slice(0, 2_000)}\n\nMore on the status page: ${boardLink("/status")}`);
+  await notify(`[AgentsHUB] Server problem: ${source}`, `${message.slice(0, 2_000)}\n\nMore on the status page: ${boardLink("/status")}`, { kind: "server" });
 }
 
 export function recentProblems(): Problem[] {

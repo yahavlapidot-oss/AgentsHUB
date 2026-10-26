@@ -35,6 +35,8 @@ export const agents = sqliteTable("agents", {
   provider: text("provider", { enum: PROVIDERS }).notNull(),
   kind: text("kind", { enum: AGENT_KINDS }).notNull().default("sdk"),
   model: text("model").notNull(),
+  /** Hosted agents: a cheaper model for chat replies, low-priority tasks and reviews. */
+  cheapModel: text("cheap_model"),
   machine: text("machine"),
   skills: text("skills", { mode: "json" }).$type<string[]>().notNull().default([]),
   /** System prompt for hosted agents. */
@@ -95,6 +97,9 @@ export const tasks = sqliteTable(
     progressPct: integer("progress_pct").notNull().default(0),
     budgetUsd: real("budget_usd"),
     createdBy: text("created_by").notNull().default("user"),
+    /** Your verdict on the result: 1 (good) or -1 (not good). The owner agent remembers it. */
+    rating: integer("rating"),
+    ratingNote: text("rating_note"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -114,6 +119,10 @@ export const runs = sqliteTable(
     tokensIn: integer("tokens_in").notNull().default(0),
     tokensOut: integer("tokens_out").notNull().default(0),
     costUsd: real("cost_usd").notNull().default(0),
+    /** Input tokens read from the provider's prompt cache (part of tokensIn). */
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    /** What prompt caching and the cheaper model saved, against the full price on the agent's main model. */
+    savedUsd: real("saved_usd").notNull().default(0),
   },
   (t) => [index("runs_agent_idx").on(t.agentId), index("runs_task_idx").on(t.taskId), index("runs_started_idx").on(t.startedAt)],
 );
@@ -268,6 +277,71 @@ export const artifacts = sqliteTable(
   (t) => [index("artifacts_task_idx").on(t.taskId), index("artifacts_project_idx").on(t.projectId), uniqueIndex("artifacts_task_path_version").on(t.taskId, t.path, t.version)],
 );
 
+export const SCHEDULE_FREQUENCIES = ["minutes", "hourly", "daily", "weekly", "monthly"] as const;
+export type ScheduleFrequency = (typeof SCHEDULE_FREQUENCIES)[number];
+
+/**
+ * Recurring work: at each due time the scheduler adds a task to Ready with these
+ * fields, for the chosen agent (or whoever picks it up). Times are wall-clock in
+ * `timezone`, so "daily at 08:00" stays 08:00 across daylight saving.
+ */
+export const schedules = sqliteTable(
+  "schedules",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    acceptanceCriteria: text("acceptance_criteria").notNull().default(""),
+    priority: text("priority", { enum: PRIORITIES }).notNull().default("medium"),
+    projectId: text("project_id"),
+    ownerAgentId: text("owner_agent_id"),
+    frequency: text("frequency", { enum: SCHEDULE_FREQUENCIES }).notNull().default("daily"),
+    /** For "minutes": how many minutes between runs (at least 15). */
+    intervalMinutes: integer("interval_minutes"),
+    /** "HH:MM" for daily, weekly and monthly; for hourly only the minutes count. */
+    timeOfDay: text("time_of_day").notNull().default("08:00"),
+    /** Weekly: days to run, 0 = Sunday. */
+    weekdays: text("weekdays", { mode: "json" }).$type<number[]>().notNull().default([]),
+    /** Monthly: day of the month (1-28). */
+    dayOfMonth: integer("day_of_month"),
+    timezone: text("timezone").notNull().default("Asia/Jerusalem"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** Don't add a new task while the last one is still open, so missed runs don't pile up. */
+    skipIfOpen: integer("skip_if_open", { mode: "boolean" }).notNull().default(true),
+    nextRunAt: integer("next_run_at"),
+    lastRunAt: integer("last_run_at"),
+    lastTaskId: text("last_task_id"),
+    runCount: integer("run_count").notNull().default(0),
+    createdBy: text("created_by").notNull().default("user"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("schedules_next_idx").on(t.nextRunAt)],
+);
+
+export const CONNECTION_SERVICES = ["github", "google", "railway", "mcp"] as const;
+export type ConnectionService = (typeof CONNECTION_SERVICES)[number];
+
+/**
+ * Accounts and servers agents may use: a GitHub token, a Google sign-in, a
+ * Railway token, an MCP server. The secret is encrypted (see src/lib/vault.ts);
+ * `meta` holds what isn't secret (the account name, a server address, scopes).
+ * agentIds limits which agents may use it; empty means every hosted agent.
+ */
+export const connections = sqliteTable("connections", {
+  id: text("id").primaryKey(),
+  service: text("service", { enum: CONNECTION_SERVICES }).notNull(),
+  label: text("label").notNull(),
+  secret: text("secret").notNull().default(""),
+  meta: text("meta", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
+  agentIds: text("agent_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  lastError: text("last_error"),
+  lastUsedAt: integer("last_used_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export type Agent = typeof agents.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -280,6 +354,10 @@ export type Note = typeof notes.$inferSelect;
 export type AgentMemory = typeof agentMemories.$inferSelect;
 export type Sandbox = typeof sandboxes.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
+export type Schedule = typeof schedules.$inferSelect;
+export type Connection = typeof connections.$inferSelect;
+/** A connection as the UI sees it: never the secret. */
+export type PublicConnection = Omit<Connection, "secret"> & { hasSecret: boolean };
 /** Artifact without its bytes, for lists. */
 export type ArtifactInfo = Omit<Artifact, "content">;
 

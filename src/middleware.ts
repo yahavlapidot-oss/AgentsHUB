@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { PASS_COOKIE, secondFactorOn, validPass } from "./lib/second-factor";
 
 /**
  * The dashboard asks for DASHBOARD_PASSWORD (HTTP Basic auth). In production
@@ -9,12 +10,15 @@ import { NextResponse, type NextRequest } from "next/server";
  * Wrong passwords are limited per address: after MAX_FAILURES in WINDOW_MS the
  * address gets 429 until the window passes. The count lives in this server's
  * memory, which is enough for one instance.
+ *
+ * With TOTP_SECRET set, the password alone isn't enough: the browser also needs
+ * the pass cookie it gets on /verify for a code from your authenticator app.
  */
 const MAX_FAILURES = 10;
 const WINDOW_MS = 15 * 60_000;
 const failures = new Map<string, { count: number; since: number }>();
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const password = process.env.DASHBOARD_PASSWORD;
   if (!password) {
     if (process.env.NODE_ENV !== "production" || process.env.DASHBOARD_OPEN === "1") return NextResponse.next();
@@ -42,7 +46,7 @@ export function middleware(req: NextRequest) {
     }
     if (sameText(given, password)) {
       failures.delete(ip);
-      return NextResponse.next();
+      return secondFactor(req);
     }
     const f = failures.get(ip) ?? { count: 0, since: now };
     f.count++;
@@ -54,6 +58,22 @@ export function middleware(req: NextRequest) {
     status: 401,
     headers: { "WWW-Authenticate": 'Basic realm="AgentsHUB"' },
   });
+}
+
+/** Paths that work with the password alone, so you can enter the code. */
+const VERIFY_PATHS = ["/verify", "/api/2fa/verify"];
+
+async function secondFactor(req: NextRequest): Promise<NextResponse> {
+  if (!secondFactorOn() || VERIFY_PATHS.includes(req.nextUrl.pathname)) return NextResponse.next();
+  if (await validPass(req.cookies.get(PASS_COOKIE)?.value)) return NextResponse.next();
+  const page = req.method === "GET" && !req.nextUrl.pathname.startsWith("/api/") && (req.headers.get("accept") ?? "").includes("text/html");
+  if (page) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/verify";
+    url.search = `?next=${encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search)}`;
+    return NextResponse.redirect(url);
+  }
+  return NextResponse.json({ error: "Enter your authenticator code at /verify first" }, { status: 401 });
 }
 
 /** Compares without stopping at the first different character, so timing doesn't leak the password. */
@@ -71,5 +91,5 @@ function clientIp(req: NextRequest): string {
 }
 
 export const config = {
-  matcher: ["/((?!api/v1|api/mcp|api/health|agentshub-hook\\.mjs|manifest\\.webmanifest|icon\\.svg|icon-192\\.png|icon-512\\.png|apple-icon\\.png|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api/v1|api/mcp|api/health|api/telegram|sw\\.js|agentshub-hook\\.mjs|manifest\\.webmanifest|icon\\.svg|icon-192\\.png|icon-512\\.png|apple-icon\\.png|_next/static|_next/image|favicon.ico).*)"],
 };

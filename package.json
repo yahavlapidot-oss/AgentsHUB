@@ -27,6 +27,8 @@
     "openai": "^7.43.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "uqr": "0.1.2",
+    "web-push": "3.6.7",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -34,6 +36,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@types/web-push": "3.6.4",
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.0",
     "postcss": "^8.5.31",

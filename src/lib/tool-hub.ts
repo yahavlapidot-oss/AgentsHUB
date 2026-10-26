@@ -9,9 +9,18 @@
 import { AGENT_TOOLS, ToolInputError, type AgentTool, type ToolContext } from "./agent-tools";
 import { addEvent, ConflictError } from "./data";
 import type { Agent } from "./schema";
+import { BROWSER_TOOLS } from "./sandbox/browser";
 import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "./sandbox/tools";
+import type { ConnectionService } from "./schema";
+import { markTainted } from "./untrusted";
+import { GITHUB_TOOLS } from "./tools/github";
+import { GOOGLE_TOOLS } from "./tools/google";
+import { RAILWAY_TOOLS } from "./tools/railway";
+import { REVIEW_TOOLS } from "./tools/review";
+import { SCHEDULE_TOOLS } from "./tools/schedule";
+import { WEB_TOOLS } from "./tools/web";
 
-export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "computer", "control"] as const;
+export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "web", "connections", "computer", "control"] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
 
 /**
@@ -29,6 +38,10 @@ export type ToolInfo = {
   core?: boolean;
   /** Only for hosted agents with a cloud computer. */
   needsSandbox?: boolean;
+  /** Only for hosted agents that may use a connection to this service (Connections page). */
+  needsConnection?: ConnectionService;
+  /** Returns outside content (web pages, email, issues, logs) that could carry someone else's instructions. */
+  untrusted?: boolean;
 };
 
 export const CATEGORY_LABELS: Record<ToolCategory, string> = {
@@ -36,6 +49,8 @@ export const CATEGORY_LABELS: Record<ToolCategory, string> = {
   team: "Team",
   memory: "Memory",
   files: "Files",
+  web: "Internet",
+  connections: "Connected accounts",
   computer: "Cloud computer",
   control: "Reporting and approvals",
 };
@@ -67,20 +82,66 @@ export const CATALOG: Record<string, ToolInfo> = {
   read_file: { category: "computer", risk: "read", needsSandbox: true },
   list_files: { category: "computer", risk: "read", needsSandbox: true },
   preview_url: { category: "computer", risk: "external", needsSandbox: true },
+  schedule_task: { category: "board", risk: "write" },
+  list_schedules: { category: "board", risk: "read" },
+  pause_schedule: { category: "board", risk: "write" },
+  review_verdict: { category: "board", risk: "write" },
+  web_search: { category: "web", risk: "external", untrusted: true },
+  fetch_page: { category: "web", risk: "external", untrusted: true },
+  browser: { category: "web", risk: "external", needsSandbox: true, untrusted: true },
+  github_list_repos: gh("read"),
+  github_read_file: gh("read", true),
+  github_search_code: gh("read", true),
+  github_list_issues: gh("read", true),
+  github_get_issue: gh("read", true),
+  github_comment: gh("external"),
+  github_create_issue: gh("external"),
+  github_create_pull_request: gh("external"),
+  railway_projects: rw("read"),
+  railway_deployments: rw("read"),
+  railway_logs: rw("read", true),
+  railway_redeploy: rw("external"),
+  gmail_search: gg("read", true),
+  gmail_read: gg("read", true),
+  gmail_draft: gg("write"),
+  gmail_send: gg("external"),
+  calendar_events: gg("read", true),
+  calendar_create_event: gg("external"),
+  drive_search: gg("read", true),
+  drive_read: gg("read", true),
 };
 
-export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SANDBOX_TOOLS];
+function gh(risk: ToolRisk, untrusted?: boolean): ToolInfo {
+  return { category: "connections", risk, needsConnection: "github", untrusted };
+}
+function rw(risk: ToolRisk, untrusted?: boolean): ToolInfo {
+  return { category: "connections", risk, needsConnection: "railway", untrusted };
+}
+function gg(risk: ToolRisk, untrusted?: boolean): ToolInfo {
+  return { category: "connections", risk, needsConnection: "google", untrusted };
+}
+
+export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...REVIEW_TOOLS, ...WEB_TOOLS, ...GITHUB_TOOLS, ...RAILWAY_TOOLS, ...GOOGLE_TOOLS, ...SANDBOX_TOOLS, ...BROWSER_TOOLS];
 
 export function toolInfo(name: string): ToolInfo {
+  if (name.startsWith("mcp_")) return { category: "connections", risk: "external", needsConnection: "mcp", untrusted: true };
   return CATALOG[name] ?? { category: "board", risk: "write" };
 }
 
-/** The tools an agent gets: everything it's allowed, minus what you turned off; sandbox tools only with a sandbox. */
-export function toolsForAgent(agent: Pick<Agent, "disabledTools">, opts: { sandbox: boolean }): AgentTool[] {
+/**
+ * The tools an agent gets: everything it's allowed, minus what you turned off.
+ * Sandbox tools only with a sandbox; account tools only for services the agent
+ * has a connection to; extra holds tools made at run time (MCP servers).
+ */
+export function toolsForAgent(
+  agent: Pick<Agent, "disabledTools">,
+  opts: { sandbox: boolean; services?: Set<ConnectionService>; extra?: AgentTool[] },
+): AgentTool[] {
   const off = new Set(agent.disabledTools);
-  return ALL_TOOLS.filter((t) => {
+  return [...ALL_TOOLS, ...(opts.extra ?? [])].filter((t) => {
     const info = toolInfo(t.name);
     if (info.needsSandbox && !opts.sandbox) return false;
+    if (info.needsConnection && !opts.services?.has(info.needsConnection)) return false;
     return info.core || !off.has(t.name);
   });
 }
@@ -99,7 +160,7 @@ const MAX_SAME_CALL = Number(process.env.TOOL_MAX_SAME_CALL ?? 5);
 /** Tools that write their own activity line. */
 const QUIET_TOOLS = new Set(["report_progress", "log_activity", "complete_task", "send_message", "save_artifact", ...SANDBOX_LOGGED_TOOLS]);
 /** Calls that are meant to repeat (polling). */
-const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes", "read_saved_file", "list_projects"]);
+const REPEATABLE = new Set(["check_inbox", "request_approval", "report_progress", "list_tasks", "get_task", "search_memory", "read_notes", "read_saved_file", "list_projects", "list_schedules"]);
 
 /**
  * Runs one agent's tool calls for one run, the same way for every provider:
@@ -140,13 +201,27 @@ export class ToolExecutor {
       }
     }
     let result: ToolResult;
+    const wasTainted = Boolean(this.ctx.taint?.tainted);
+    const sourcesBefore = this.ctx.taint?.sources.length ?? 0;
     try {
       const output = await tool.run(call.args, this.ctx);
       result = { id: call.id, name: call.name, output: JSON.stringify(output).slice(0, 50_000) };
+      // The injection guard: once a run reads outside content, sending anything needs your OK (see tools/gate.ts).
+      // Tools name their own source ("Gmail"); this catches any that don't.
+      if (toolInfo(call.name).untrusted && (this.ctx.taint?.sources.length ?? 0) === sourcesBefore && !this.ctx.taint?.tainted) markTainted(this.ctx.taint, call.name);
     } catch (e) {
       const known = e instanceof ToolInputError || e instanceof ConflictError;
       if (!known) console.error(`[tools] ${call.name} failed`, e);
       result = { id: call.id, name: call.name, output: known ? (e as Error).message : "Internal error", isError: true };
+    }
+    if (!wasTainted && this.ctx.taint?.tainted) {
+      await addEvent({
+        agentId: this.ctx.agent.id,
+        taskId: this.log.taskId ?? null,
+        runId: this.log.runId ?? null,
+        type: "note",
+        payload: { text: `Read outside content (${this.ctx.taint.sources.join(", ")}). For the rest of this run, sending or publishing anything asks you first.` },
+      });
     }
     if (!QUIET_TOOLS.has(call.name)) {
       await addEvent({

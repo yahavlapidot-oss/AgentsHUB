@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const token = () => (JSON.parse(readFileSync("e2e/.state.json", "utf8")) as { token: string }).token;
 
-for (const path of ["/", "/live", "/approvals", "/artifacts", "/usage", "/agents", "/projects", "/chat", "/chat/team", "/notes", "/audit", "/status"]) {
+for (const path of ["/", "/live", "/approvals", "/artifacts", "/usage", "/agents", "/projects", "/chat", "/chat/team", "/notes", "/audit", "/status", "/schedules", "/connections", "/settings", "/chat/hq"]) {
   test(`${path} fits a phone screen`, async ({ page }) => {
     await page.goto(path);
     await page.waitForLoadState("networkidle");

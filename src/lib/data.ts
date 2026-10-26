@@ -4,13 +4,14 @@
  * touching components.
  */
 import { createHash } from "node:crypto";
-import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
+import { CHIEF_SETTING, HQ_CHANNEL } from "./hq";
 import { isProjectMember } from "./project-lead";
 
 export { isProjectMember, projectLead } from "./project-lead";
-import { boardLink, notifyByEmail } from "./notify";
+import { boardLink, notify } from "./notify";
 import { getBlobStore } from "./storage";
 import { generateAgentToken, hashToken } from "./tokens";
 import {
@@ -151,12 +152,14 @@ export type Snapshot = {
   projects: Project[];
   /** Set while the emergency stop is on. */
   emergencyStop: { at: number; agentIds: string[] } | null;
+  /** The agent you talk to in the HQ chat. */
+  chiefAgentId: string | null;
   generatedAt: number;
 };
 
 /** Everything the live board needs in one round trip. */
 export async function getSnapshot(): Promise<Snapshot> {
-  const [a, t, e, m, ap, p, stop] = await Promise.all([
+  const [a, t, e, m, ap, p, stop, chief] = await Promise.all([
     getAgents(),
     getTasks(),
     getEvents({ limit: 60 }),
@@ -164,8 +167,9 @@ export async function getSnapshot(): Promise<Snapshot> {
     getApprovals({ pendingOnly: true }),
     getProjects(),
     getEmergencyStop(),
+    getChiefAgentId(),
   ]);
-  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, emergencyStop: stop, generatedAt: Date.now() };
+  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, emergencyStop: stop, chiefAgentId: chief, generatedAt: Date.now() };
 }
 
 export type UsageRow = { key: string; runs: number; tokensIn: number; tokensOut: number; costUsd: number };
@@ -236,6 +240,10 @@ export async function setAgentDisabledTools(agentId: string, names: string[]): P
 
 export async function setAgentAutonomy(agentId: string, autonomy: Agent["autonomy"]): Promise<void> {
   await db.update(agents).set({ autonomy }).where(eq(agents.id, agentId));
+}
+
+export async function setAgentCheapModel(agentId: string, model: string | null): Promise<void> {
+  await db.update(agents).set({ cheapModel: model?.trim() || null }).where(eq(agents.id, agentId));
 }
 
 export async function setAgentSandbox(agentId: string, enabled: boolean): Promise<void> {
@@ -438,6 +446,10 @@ export async function postMessage(input: {
       at: Date.now(),
     })
     .returning();
+  // The chief of staff's answers also reach your phone.
+  if (row.projectId === HQ_CHANNEL && row.fromAgentId) {
+    void import("./telegram").then((t) => t.relayHqReply(row)).catch((e) => console.error("[telegram] relay failed", e));
+  }
   return row;
 }
 
@@ -569,7 +581,7 @@ export async function startRun(agentId: string, input: { taskId?: string | null;
 export async function addUsage(
   agentId: string,
   runId: string,
-  usage: { tokensIn: number; tokensOut: number; costUsd?: number },
+  usage: { tokensIn: number; tokensOut: number; costUsd?: number; cachedTokens?: number; savedUsd?: number },
 ): Promise<void> {
   const cost = usage.costUsd ?? 0;
   await db
@@ -578,6 +590,8 @@ export async function addUsage(
       tokensIn: sql`${runs.tokensIn} + ${usage.tokensIn}`,
       tokensOut: sql`${runs.tokensOut} + ${usage.tokensOut}`,
       costUsd: sql`${runs.costUsd} + ${cost}`,
+      cachedTokens: sql`${runs.cachedTokens} + ${usage.cachedTokens ?? 0}`,
+      savedUsd: sql`${runs.savedUsd} + ${usage.savedUsd ?? 0}`,
     })
     .where(and(eq(runs.id, runId), eq(runs.agentId, agentId)));
   await db
@@ -606,6 +620,19 @@ export async function recordUsage(
   await addUsage(agentId, run.id, input);
   await endRun(agentId, run.id, "success");
   return run;
+}
+
+/** What prompt caching and cheaper models saved, and how much input came from the cache. */
+export async function getSavings(since = 0): Promise<{ savedUsd: number; cachedTokens: number; tokensIn: number }> {
+  const [row] = await db
+    .select({
+      savedUsd: sql<number>`coalesce(sum(${runs.savedUsd}), 0)`,
+      cachedTokens: sql<number>`coalesce(sum(${runs.cachedTokens}), 0)`,
+      tokensIn: sql<number>`coalesce(sum(${runs.tokensIn}), 0)`,
+    })
+    .from(runs)
+    .where(gte(runs.startedAt, since));
+  return row ?? { savedUsd: 0, cachedTokens: 0, tokensIn: 0 };
 }
 
 /** Everything spent on a task so far: model tokens and sandbox time, over all runs. */
@@ -686,7 +713,7 @@ export async function requestApproval(
   if (input.taskId) await updateTask(input.taskId, { column: "waiting_on_you" }, { agentId });
   await db.update(agents).set({ status: "waiting" }).where(eq(agents.id, agentId));
   const [agent] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId));
-  await notifyByEmail(
+  await notify(
     `[AgentsHUB] ${agent?.name ?? "An agent"} needs your approval: ${row.action}`,
     [
       `${agent?.name ?? "An agent"} is waiting for you before: ${row.action}`,
@@ -699,6 +726,7 @@ export async function requestApproval(
     ]
       .filter((l, i, all) => l || i === all.length - 2)
       .join("\n"),
+    { kind: "approval", approvalId: row.id },
   );
   return row;
 }
@@ -764,6 +792,17 @@ export async function setSetting(key: string, value: unknown | null): Promise<vo
     .insert(settings)
     .values({ key, value, updatedAt: Date.now() })
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: Date.now() } });
+}
+
+/** The chief of staff, if one is picked and still exists. */
+export async function getChiefAgentId(): Promise<string | null> {
+  const id = await getSetting<string>(CHIEF_SETTING);
+  if (!id) return null;
+  return (await getAgent(id)) ? id : null;
+}
+
+export async function setChiefAgentId(agentId: string | null): Promise<void> {
+  await setSetting(CHIEF_SETTING, agentId);
 }
 
 export async function getEmergencyStop(): Promise<StopState | null> {

@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { createAgentAction } from "@/app/actions";
+import { createAgentAction, makeReviewerAction, setChiefAction } from "@/app/actions";
+import { AGENT_TEMPLATES, type AgentTemplate } from "@/lib/agent-templates";
 import { PROVIDER_META } from "@/lib/format";
 import { PROVIDERS, type Provider } from "@/lib/schema";
 import { connectSnippets, mcpSnippets } from "@/lib/snippets";
@@ -31,7 +32,20 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
   const [skills, setSkills] = useState("");
   const [result, setResult] = useState<{ id: string; token: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [template, setTemplate] = useState<AgentTemplate | null>(null);
   const [origin, setOrigin] = useState("");
+
+  function applyTemplate(t: AgentTemplate | null) {
+    setTemplate(t);
+    if (!t) return;
+    setName(t.name);
+    setProvider(t.provider);
+    setModel(t.model);
+    setSkills(t.skills.join(", "));
+    setInstructions(t.instructions);
+    setComputer(Boolean(t.computer));
+    setLead(Boolean(t.lead));
+  }
   useEffect(() => setOrigin(window.location.origin), []);
 
   async function submit(e: React.FormEvent) {
@@ -51,6 +65,8 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
         role: lead ? "lead" : "member",
         sandboxEnabled: mode === "hosted" && computer,
       });
+      if (mode === "hosted" && template?.becomes === "chief") await setChiefAction(r.id);
+      if (mode === "hosted" && template?.becomes === "reviewer") await makeReviewerAction(r.id);
       setResult(r);
       await refresh();
     } catch {
@@ -66,6 +82,8 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
             AgentsHUB will run this agent with {PROVIDER_META[provider].label} ({model}). It takes tasks in <b>Ready</b> that are
             assigned to it or to nobody, splits big ones into subtasks, and reports every step here.
           </p>
+          {template?.becomes === "chief" && <p>It&apos;s your chief of staff now: talk to it in the HQ chat (and on Telegram, if you set it up).</p>}
+          {template?.becomes === "reviewer" && <p>It now reviews finished high and critical tasks before they reach you. Change this in Settings → Quality check.</p>}
           <p className="text-ink-soft">
             The server needs the provider&apos;s API key ({provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"}).
             Without it, the agent&apos;s first task stops with an error on the board.
@@ -146,6 +164,27 @@ export function ConnectAgentDialog({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         </fieldset>
+        {mode === "hosted" && (
+          <fieldset>
+            <legend className="label">Start from a template (optional)</legend>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {AGENT_TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  title={t.blurb}
+                  aria-pressed={template?.id === t.id}
+                  onClick={() => applyTemplate(template?.id === t.id ? null : t)}
+                  className={`rounded-md border px-2 py-1.5 text-left text-sm ${template?.id === t.id ? "border-2 border-[#0073ea]" : "border-line hover:bg-canvas"}`}
+                >
+                  <span className="mr-1">{t.icon}</span>
+                  <span className="font-medium">{t.name}</span>
+                </button>
+              ))}
+            </div>
+            {template && <p className="mt-1 text-xs text-ink-soft">{template.blurb}</p>}
+          </fieldset>
+        )}
         <fieldset>
           <legend className="label">Model provider</legend>
           <div className="grid grid-cols-4 gap-2">
