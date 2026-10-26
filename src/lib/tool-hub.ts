@@ -12,6 +12,7 @@ import type { Agent } from "./schema";
 import { BROWSER_TOOLS } from "./sandbox/browser";
 import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "./sandbox/tools";
 import type { ConnectionService } from "./schema";
+import { markTainted } from "./untrusted";
 import { GITHUB_TOOLS } from "./tools/github";
 import { GOOGLE_TOOLS } from "./tools/google";
 import { RAILWAY_TOOLS } from "./tools/railway";
@@ -39,6 +40,8 @@ export type ToolInfo = {
   needsSandbox?: boolean;
   /** Only for hosted agents that may use a connection to this service (Connections page). */
   needsConnection?: ConnectionService;
+  /** Returns outside content (web pages, email, issues, logs) that could carry someone else's instructions. */
+  untrusted?: boolean;
 };
 
 export const CATEGORY_LABELS: Record<ToolCategory, string> = {
@@ -83,45 +86,45 @@ export const CATALOG: Record<string, ToolInfo> = {
   list_schedules: { category: "board", risk: "read" },
   pause_schedule: { category: "board", risk: "write" },
   review_verdict: { category: "board", risk: "write" },
-  web_search: { category: "web", risk: "external" },
-  fetch_page: { category: "web", risk: "external" },
-  browser: { category: "web", risk: "external", needsSandbox: true },
+  web_search: { category: "web", risk: "external", untrusted: true },
+  fetch_page: { category: "web", risk: "external", untrusted: true },
+  browser: { category: "web", risk: "external", needsSandbox: true, untrusted: true },
   github_list_repos: gh("read"),
-  github_read_file: gh("read"),
-  github_search_code: gh("read"),
-  github_list_issues: gh("read"),
-  github_get_issue: gh("read"),
+  github_read_file: gh("read", true),
+  github_search_code: gh("read", true),
+  github_list_issues: gh("read", true),
+  github_get_issue: gh("read", true),
   github_comment: gh("external"),
   github_create_issue: gh("external"),
   github_create_pull_request: gh("external"),
   railway_projects: rw("read"),
   railway_deployments: rw("read"),
-  railway_logs: rw("read"),
+  railway_logs: rw("read", true),
   railway_redeploy: rw("external"),
-  gmail_search: gg("read"),
-  gmail_read: gg("read"),
+  gmail_search: gg("read", true),
+  gmail_read: gg("read", true),
   gmail_draft: gg("write"),
   gmail_send: gg("external"),
-  calendar_events: gg("read"),
+  calendar_events: gg("read", true),
   calendar_create_event: gg("external"),
-  drive_search: gg("read"),
-  drive_read: gg("read"),
+  drive_search: gg("read", true),
+  drive_read: gg("read", true),
 };
 
-function gh(risk: ToolRisk): ToolInfo {
-  return { category: "connections", risk, needsConnection: "github" };
+function gh(risk: ToolRisk, untrusted?: boolean): ToolInfo {
+  return { category: "connections", risk, needsConnection: "github", untrusted };
 }
-function rw(risk: ToolRisk): ToolInfo {
-  return { category: "connections", risk, needsConnection: "railway" };
+function rw(risk: ToolRisk, untrusted?: boolean): ToolInfo {
+  return { category: "connections", risk, needsConnection: "railway", untrusted };
 }
-function gg(risk: ToolRisk): ToolInfo {
-  return { category: "connections", risk, needsConnection: "google" };
+function gg(risk: ToolRisk, untrusted?: boolean): ToolInfo {
+  return { category: "connections", risk, needsConnection: "google", untrusted };
 }
 
 export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...REVIEW_TOOLS, ...WEB_TOOLS, ...GITHUB_TOOLS, ...RAILWAY_TOOLS, ...GOOGLE_TOOLS, ...SANDBOX_TOOLS, ...BROWSER_TOOLS];
 
 export function toolInfo(name: string): ToolInfo {
-  if (name.startsWith("mcp_")) return { category: "connections", risk: "external", needsConnection: "mcp" };
+  if (name.startsWith("mcp_")) return { category: "connections", risk: "external", needsConnection: "mcp", untrusted: true };
   return CATALOG[name] ?? { category: "board", risk: "write" };
 }
 
@@ -198,13 +201,27 @@ export class ToolExecutor {
       }
     }
     let result: ToolResult;
+    const wasTainted = Boolean(this.ctx.taint?.tainted);
+    const sourcesBefore = this.ctx.taint?.sources.length ?? 0;
     try {
       const output = await tool.run(call.args, this.ctx);
       result = { id: call.id, name: call.name, output: JSON.stringify(output).slice(0, 50_000) };
+      // The injection guard: once a run reads outside content, sending anything needs your OK (see tools/gate.ts).
+      // Tools name their own source ("Gmail"); this catches any that don't.
+      if (toolInfo(call.name).untrusted && (this.ctx.taint?.sources.length ?? 0) === sourcesBefore && !this.ctx.taint?.tainted) markTainted(this.ctx.taint, call.name);
     } catch (e) {
       const known = e instanceof ToolInputError || e instanceof ConflictError;
       if (!known) console.error(`[tools] ${call.name} failed`, e);
       result = { id: call.id, name: call.name, output: known ? (e as Error).message : "Internal error", isError: true };
+    }
+    if (!wasTainted && this.ctx.taint?.tainted) {
+      await addEvent({
+        agentId: this.ctx.agent.id,
+        taskId: this.log.taskId ?? null,
+        runId: this.log.runId ?? null,
+        type: "note",
+        payload: { text: `Read outside content (${this.ctx.taint.sources.join(", ")}). For the rest of this run, sending or publishing anything asks you first.` },
+      });
     }
     if (!QUIET_TOOLS.has(call.name)) {
       await addEvent({
