@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getTaskDetailAction, sendMessageAction, updateTaskAction } from "@/app/actions";
+import { getTaskDetailAction, rateTaskAction, sendMessageAction, updateTaskAction } from "@/app/actions";
 import { COLUMN_META, PRIORITY_META, timeAgo, usd } from "@/lib/format";
 import type { AgentEvent, ArtifactInfo, Column, Message, Priority } from "@/lib/schema";
 import { ArtifactsList } from "../artifacts-list";
 import { describeEvent } from "../event-line";
 import { useLive } from "../live";
 import { AgentAvatar, ColorPicker, ProgressBar, ProviderTag, UserAvatar } from "../ui";
+import { toast } from "../toast";
 import { OwnerPicker } from "./owner-picker";
 
 type Tab = "updates" | "activity" | "files" | "details";
@@ -67,6 +68,12 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
             <ColorPicker<Priority> className="w-40 overflow-hidden rounded" value={task.priority} options={PRIORITY_META} onChange={(p) => patch({ priority: p })} />
             <span className="text-ink-faint">Progress</span>
             <div className="max-w-xs"><ProgressBar pct={task.progressPct} color={COLUMN_META[task.column].color} /></div>
+            {owner && (task.column === "review" || task.column === "done") && (
+              <>
+                <span className="text-ink-faint">Your verdict</span>
+                <RateTask taskId={taskId} rating={task.rating} note={task.ratingNote} ownerName={owner.name} />
+              </>
+            )}
           </div>
           <div role="tablist" className="mt-4 flex gap-1">
             {(["updates", "activity", "files", "details"] as const).map((t) => (
@@ -97,6 +104,57 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
           {tab === "details" && <Details taskId={taskId} />}
         </div>
       </aside>
+    </div>
+  );
+}
+
+/** 👍/👎 on a result. The owner agent remembers it for next time. */
+function RateTask({ taskId, rating, note, ownerName }: { taskId: string; rating: number | null; note: string | null; ownerName: string }) {
+  const { refresh } = useLive();
+  const [draft, setDraft] = useState<{ rating: 1 | -1; note: string } | null>(null);
+  const save = async (r: 1 | -1 | null, n = "") => {
+    await rateTaskAction(taskId, r, n);
+    setDraft(null);
+    await refresh();
+    if (r) toast(`${ownerName} will remember this`);
+  };
+  const btn = (r: 1 | -1, label: string) => (
+    <button
+      type="button"
+      aria-pressed={rating === r}
+      aria-label={r > 0 ? "Good result" : "Not good"}
+      className={`rounded px-2 py-0.5 text-base ${rating === r ? "bg-[#cce5ff]" : "hover:bg-canvas"}`}
+      onClick={() => (rating === r ? save(null) : setDraft({ rating: r, note: "" }))}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1">
+        {btn(1, "👍")}
+        {btn(-1, "👎")}
+        {note && !draft && <span className="truncate text-xs text-ink-soft" dir="auto">“{note}”</span>}
+      </div>
+      {draft && (
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save(draft.rating, draft.note);
+          }}
+        >
+          <input
+            className="input py-1 text-sm"
+            dir="auto"
+            autoFocus
+            placeholder={draft.rating > 0 ? "What was good? (optional)" : "What should change next time?"}
+            value={draft.note}
+            onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+          />
+          <button type="submit" className="btn-primary py-1">Save</button>
+        </form>
+      )}
     </div>
   );
 }

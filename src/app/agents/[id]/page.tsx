@@ -25,6 +25,8 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
     getAgentMemories(id),
   ]);
   const mine = tasks.filter((t) => t.ownerAgentId === id);
+  const up = mine.filter((t) => t.rating === 1).length;
+  const down = mine.filter((t) => t.rating === -1).length;
   const status = AGENT_STATUS_META[agent.status];
 
   return (
@@ -60,13 +62,14 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-6">
         {[
           ["Tokens in", compact(agent.tokensIn)],
           ["Tokens out", compact(agent.tokensOut)],
           ["Cost", usd(agent.costUsd)],
           ["Runs", String(runs.length)],
           ["Open tasks", String(mine.filter((t) => t.column !== "done").length)],
+          ["Your ratings", up || down ? `👍${up} 👎${down}` : "–"],
         ].map(([k, v]) => (
           <div key={k} className="bg-white px-4 sm:px-6 py-3">
             <p className="text-xs text-ink-faint">{k}</p>

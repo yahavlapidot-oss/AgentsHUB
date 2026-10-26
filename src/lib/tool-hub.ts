@@ -15,6 +15,7 @@ import type { ConnectionService } from "./schema";
 import { GITHUB_TOOLS } from "./tools/github";
 import { GOOGLE_TOOLS } from "./tools/google";
 import { RAILWAY_TOOLS } from "./tools/railway";
+import { REVIEW_TOOLS } from "./tools/review";
 import { SCHEDULE_TOOLS } from "./tools/schedule";
 import { WEB_TOOLS } from "./tools/web";
 
@@ -81,6 +82,7 @@ export const CATALOG: Record<string, ToolInfo> = {
   schedule_task: { category: "board", risk: "write" },
   list_schedules: { category: "board", risk: "read" },
   pause_schedule: { category: "board", risk: "write" },
+  review_verdict: { category: "board", risk: "write" },
   web_search: { category: "web", risk: "external" },
   fetch_page: { category: "web", risk: "external" },
   browser: { category: "web", risk: "external", needsSandbox: true },
@@ -116,7 +118,7 @@ function gg(risk: ToolRisk): ToolInfo {
   return { category: "connections", risk, needsConnection: "google" };
 }
 
-export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...WEB_TOOLS, ...GITHUB_TOOLS, ...RAILWAY_TOOLS, ...GOOGLE_TOOLS, ...SANDBOX_TOOLS, ...BROWSER_TOOLS];
+export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...REVIEW_TOOLS, ...WEB_TOOLS, ...GITHUB_TOOLS, ...RAILWAY_TOOLS, ...GOOGLE_TOOLS, ...SANDBOX_TOOLS, ...BROWSER_TOOLS];
 
 export function toolInfo(name: string): ToolInfo {
   if (name.startsWith("mcp_")) return { category: "connections", risk: "external", needsConnection: "mcp" };

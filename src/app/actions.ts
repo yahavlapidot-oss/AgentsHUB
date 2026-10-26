@@ -268,3 +268,20 @@ export async function getTaskDetailAction(taskId: string) {
   ]);
   return { events, messages, artifacts };
 }
+
+export async function rateTaskAction(taskId: string, rating: 1 | -1 | null, note = "") {
+  const { rateTask } = await import("@/lib/quality");
+  await rateTask(taskId, z.union([z.literal(1), z.literal(-1), z.null()]).parse(rating), z.string().max(2_000).parse(note));
+}
+
+export async function saveQualityAction(input: { reviewerAgentId: string | null; mode: string; maxRounds: number }) {
+  const { setQualitySettings, REVIEW_MODES } = await import("@/lib/quality");
+  await setQualitySettings({ reviewerAgentId: input.reviewerAgentId || null, mode: z.enum(REVIEW_MODES).parse(input.mode), maxRounds: z.number().int().min(1).max(5).parse(input.maxRounds) });
+}
+
+/** Makes this agent the reviewer, turning the check on for important tasks if it was off. */
+export async function makeReviewerAction(agentId: string) {
+  const { getQualitySettings, setQualitySettings } = await import("@/lib/quality");
+  const s = await getQualitySettings();
+  await setQualitySettings({ ...s, reviewerAgentId: agentId, mode: s.mode === "off" ? "important" : s.mode });
+}

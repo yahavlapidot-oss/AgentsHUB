@@ -40,6 +40,7 @@ import {
   writeNote,
 } from "./data";
 import { MEMORY_SOURCES, searchMemory } from "./memory";
+import { isReviewTask, maybeRequestReview } from "./quality";
 import { boardLink, notify } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
 import type { SandboxSession } from "./sandbox/session";
@@ -518,8 +519,17 @@ export const AGENT_TOOLS: AgentTool[] = [
     },
     args: z.object({ taskId: z.string(), summary: z.string().min(1).max(20_000) }),
     run: async ({ taskId, summary }, { agent }) => {
+      const current = await getTask(taskId);
+      // A review task closes on its own; the user sees the verdict on the reviewed task.
+      if (current && isReviewTask(current)) {
+        const done = await reportProgress(agent.id, taskId, { progressPct: 100, column: "done", note: summary });
+        await heartbeat(agent.id, { status: "active", currentTaskId: null });
+        return { task: done, hint: "Use review_verdict to approve or send back the reviewed task." };
+      }
       const task = await reportProgress(agent.id, taskId, { progressPct: 100, column: "review", note: summary });
       await heartbeat(agent.id, { status: "active", currentTaskId: null });
+      const review = task ? await maybeRequestReview(task, agent.id, summary) : null;
+      if (review) return { task, review: `Sent for review (${review.id}). If changes are needed, it comes back to you with the reviewer's notes.` };
       // Delivery report: the task's files go up for review with it.
       const files = await getArtifacts({ taskId, latestOnly: true });
       for (const f of files) if (f.status === "draft") await setArtifactStatus(f.id, "in_review");

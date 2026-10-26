@@ -95,6 +95,9 @@ export const tasks = sqliteTable(
     progressPct: integer("progress_pct").notNull().default(0),
     budgetUsd: real("budget_usd"),
     createdBy: text("created_by").notNull().default("user"),
+    /** Your verdict on the result: 1 (good) or -1 (not good). The owner agent remembers it. */
+    rating: integer("rating"),
+    ratingNote: text("rating_note"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
