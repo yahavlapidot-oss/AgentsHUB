@@ -12,7 +12,7 @@
 import { eq, gte, sql } from "drizzle-orm";
 import { db } from "./db";
 import { getProject, getSetting, getTask, getTaskCost, setSetting } from "./data";
-import { boardLink, notifyByEmail } from "./notify";
+import { boardLink, notify } from "./notify";
 import { runs, sandboxes, tasks } from "./schema";
 
 export const ALERT_AT = 0.8;
@@ -127,9 +127,10 @@ async function alertOnce(key: string, spent: number, cap: number, what: string, 
   const sent = (await getSetting<string[]>(ALERTS_KEY)) ?? [];
   if (sent.includes(key)) return;
   await setSetting(ALERTS_KEY, [...sent.slice(-200), key]);
-  await notifyByEmail(
+  await notify(
     `[AgentsHUB] ${Math.round((spent / cap) * 100)}% of ${what} is used`,
     `$${spent.toFixed(2)} of $${cap.toFixed(2)} spent. Agents stop at the cap.\n${boardLink(path)}`,
+    { kind: "budget" },
   );
 }
 

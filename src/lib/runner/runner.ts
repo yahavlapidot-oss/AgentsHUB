@@ -56,7 +56,7 @@ import { describeTiming, getSchedules, runDueSchedules } from "../schedules";
 import { HQ_CHANNEL } from "../hq";
 import { budgetProblem } from "../budgets";
 import { recordProblem, runnerStarted, runnerTicked } from "../monitor";
-import { boardLink, notifyByEmail } from "../notify";
+import { boardLink, notify } from "../notify";
 import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
 import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
@@ -381,9 +381,10 @@ async function loop(
 async function failTask(agent: Agent, task: Task, runId: string, text: string): Promise<void> {
   await addEvent({ agentId: agent.id, taskId: task.id, runId, type: "error", payload: { text } });
   await updateTask(task.id, { column: "waiting_on_you" }, { agentId: agent.id });
-  await notifyByEmail(
+  await notify(
     `[AgentsHUB] ${agent.name} got stuck on "${task.title}"`,
     `${text}\n\nThe task is now in "Waiting on you".\n${boardLink("/")}`,
+    { kind: "stuck" },
   );
 }
 

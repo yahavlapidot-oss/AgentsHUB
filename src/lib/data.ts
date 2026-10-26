@@ -7,11 +7,11 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
-import { CHIEF_SETTING } from "./hq";
+import { CHIEF_SETTING, HQ_CHANNEL } from "./hq";
 import { isProjectMember } from "./project-lead";
 
 export { isProjectMember, projectLead } from "./project-lead";
-import { boardLink, notifyByEmail } from "./notify";
+import { boardLink, notify } from "./notify";
 import { getBlobStore } from "./storage";
 import { generateAgentToken, hashToken } from "./tokens";
 import {
@@ -442,6 +442,10 @@ export async function postMessage(input: {
       at: Date.now(),
     })
     .returning();
+  // The chief of staff's answers also reach your phone.
+  if (row.projectId === HQ_CHANNEL && row.fromAgentId) {
+    void import("./telegram").then((t) => t.relayHqReply(row)).catch((e) => console.error("[telegram] relay failed", e));
+  }
   return row;
 }
 
@@ -690,7 +694,7 @@ export async function requestApproval(
   if (input.taskId) await updateTask(input.taskId, { column: "waiting_on_you" }, { agentId });
   await db.update(agents).set({ status: "waiting" }).where(eq(agents.id, agentId));
   const [agent] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId));
-  await notifyByEmail(
+  await notify(
     `[AgentsHUB] ${agent?.name ?? "An agent"} needs your approval: ${row.action}`,
     [
       `${agent?.name ?? "An agent"} is waiting for you before: ${row.action}`,
@@ -703,6 +707,7 @@ export async function requestApproval(
     ]
       .filter((l, i, all) => l || i === all.length - 2)
       .join("\n"),
+    { kind: "approval", approvalId: row.id },
   );
   return row;
 }

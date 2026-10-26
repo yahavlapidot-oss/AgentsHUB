@@ -25,6 +25,7 @@ export function useNavItems(): NavItem[] {
     { href: "/approvals", label: "Approvals", icon: "✓", alert: approvals.length },
     { href: "/audit", label: "Audit log", icon: "☰" },
     { href: "/status", label: "System status", icon: "♥" },
+    { href: "/settings", label: "Settings", icon: "⚙" },
   ];
 }
 

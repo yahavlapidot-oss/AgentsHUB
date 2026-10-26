@@ -40,7 +40,7 @@ import {
   writeNote,
 } from "./data";
 import { MEMORY_SOURCES, searchMemory } from "./memory";
-import { boardLink, notifyByEmail } from "./notify";
+import { boardLink, notify } from "./notify";
 import { COLUMNS, PRIORITIES, type Agent } from "./schema";
 import type { SandboxSession } from "./sandbox/session";
 import type { Taint } from "./untrusted";
@@ -525,11 +525,12 @@ export const AGENT_TOOLS: AgentTool[] = [
       for (const f of files) if (f.status === "draft") await setArtifactStatus(f.id, "in_review");
       const fileLines = files.map((f) => `- ${f.path} (v${f.version}): ${boardLink(`/api/ui/artifacts/${f.id}`)}`);
       if (task) {
-        await notifyByEmail(
+        await notify(
           `[AgentsHUB] ${agent.name} finished "${task.title}"`,
           [summary.slice(0, 4_000), fileLines.length && `Files:\n${fileLines.join("\n")}`, `It's waiting for your review.\n${boardLink("/")}`]
             .filter(Boolean)
             .join("\n\n"),
+          { kind: "finished" },
         );
       }
       return { task, files: files.map((f) => ({ path: f.path, version: f.version })) };
