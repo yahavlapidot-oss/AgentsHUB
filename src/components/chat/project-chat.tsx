@@ -9,6 +9,7 @@ import { PRIORITIES, type Message, type Priority, type PublicAgent, type Task } 
 import { useLive } from "../live";
 import { toast } from "../toast";
 import { AgentAvatar, ProgressBar } from "../ui";
+import { MicButton } from "./mic-button";
 
 const POLL_MS = 3000;
 const QUICK = ["What's the status?", "What's blocked or waiting on me?", "Summarize today's work"];
@@ -372,6 +373,7 @@ export function Composer({
           }}
           placeholder={asTask ? "e.g. Add a pricing page with three plans" : `Message ${leadName}`}
         />
+        <MicButton disabled={busy} onText={(t) => setText((cur) => (cur.trim() ? `${cur.trimEnd()} ${t}` : t))} />
         <button type="submit" className="btn-primary" disabled={!text.trim() || busy}>{asTask ? "Add task" : "Send"}</button>
       </form>
     </div>

@@ -6,6 +6,8 @@ import type { Snapshot } from "@/lib/data";
 import { toast } from "./toast";
 
 const POLL_MS = 3000;
+/** How often to poll anyway while the push stream is up. */
+const STREAM_POLL_MS = 30_000;
 /** How often "5 min ago" style times move on while nothing else changes. */
 const CLOCK_MS = 30_000;
 
@@ -40,6 +42,9 @@ export function LiveProvider({ initial, initialTag, children }: { initial: Snaps
   const saving = useRef(0);
   const inFlight = useRef(false);
   const again = useRef(false);
+  /** When the push stream is up, polling slows to a safety net. */
+  const streaming = useRef(false);
+  const lastPoll = useRef(0);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (inFlight.current) {
@@ -47,6 +52,7 @@ export function LiveProvider({ initial, initialTag, children }: { initial: Snaps
       return;
     }
     inFlight.current = true;
+    lastPoll.current = Date.now();
     const startedAt = edits.current;
     try {
       const res = await fetch("/api/ui/snapshot", { cache: "no-store", headers: etag.current ? { "if-none-match": etag.current } : {} });
@@ -73,7 +79,9 @@ export function LiveProvider({ initial, initialTag, children }: { initial: Snaps
 
   useEffect(() => {
     const id = setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState !== "visible") return;
+      if (streaming.current && Date.now() - lastPoll.current < STREAM_POLL_MS) return;
+      void refresh();
     }, POLL_MS);
     // Coming back to the tab shows fresh data at once instead of after the next tick.
     const onShow = () => document.visibilityState === "visible" && void refresh();
@@ -87,6 +95,29 @@ export function LiveProvider({ initial, initialTag, children }: { initial: Snaps
       window.removeEventListener("online", onShow);
     };
   }, [refresh]);
+
+  // Pushed updates (Server-Sent Events). If the stream drops, the browser reconnects and polling covers the gap.
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return;
+    const es = new EventSource("/api/ui/stream");
+    es.addEventListener("snapshot", (e) => {
+      streaming.current = true;
+      if (saving.current || inFlight.current) return;
+      try {
+        const { tag, snap: next } = JSON.parse((e as MessageEvent<string>).data) as { tag: string; snap: Snapshot };
+        if (tag === etag.current) return;
+        etag.current = tag;
+        setSnap(next);
+        setVersion(tag);
+      } catch {
+        // A bad frame: the next one or the next poll fixes it.
+      }
+    });
+    es.onerror = () => {
+      streaming.current = false;
+    };
+    return () => es.close();
+  }, []);
 
   const save = useCallback(
     async (show: (s: Snapshot) => Snapshot, action: () => Promise<unknown>, done?: string) => {
