@@ -14,7 +14,7 @@ const POLL_MS = 3000;
 const QUICK = ["What's the status?", "What's blocked or waiting on me?", "Summarize today's work"];
 
 /** Polls the project chat's messages, answering 304 while nothing changed. */
-function useProjectMessages(projectId: string) {
+export function useProjectMessages(projectId: string) {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const etag = useRef<string | null>(null);
 
@@ -205,12 +205,12 @@ function PickLead({ agents, onPick }: { agents: PublicAgent[]; onPick: (id: stri
   );
 }
 
-function Bubble({ m, lead, agents, tasks }: { m: Message; lead: PublicAgent; agents: PublicAgent[]; tasks: Task[] }) {
+export function Bubble({ m, lead, agents, tasks }: { m: Message; lead: PublicAgent; agents: PublicAgent[]; tasks: Task[] }) {
   const task = m.taskId ? tasks.find((t) => t.id === m.taskId) : undefined;
   if (!m.fromAgentId) {
     return (
       <li className="flex flex-col items-end gap-1">
-        <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-brand px-3 py-2 text-sm text-white">{m.text}</p>
+        <p dir="auto" className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-brand px-3 py-2 text-sm text-white">{m.text}</p>
         {task && <TaskCard task={task} tasks={tasks} agents={agents} />}
         <time className="text-[11px] text-ink-faint">{timeAgo(m.at)}</time>
       </li>
@@ -234,7 +234,7 @@ function Bubble({ m, lead, agents, tasks }: { m: Message; lead: PublicAgent; age
     <li className="flex items-end gap-2">
       <AgentAvatar agent={from} size={26} />
       <div className="flex max-w-[85%] flex-col items-start gap-1">
-        <p className="whitespace-pre-wrap break-words rounded-2xl rounded-bl-md border border-line bg-white px-3 py-2 text-sm">{m.text}</p>
+        <p dir="auto" className="whitespace-pre-wrap break-words rounded-2xl rounded-bl-md border border-line bg-white px-3 py-2 text-sm">{m.text}</p>
         {task && <TaskCard task={task} tasks={tasks} agents={agents} />}
         <time className="text-[11px] text-ink-faint">{timeAgo(m.at)}</time>
       </div>
@@ -275,7 +275,17 @@ function TaskCard({ task, tasks, agents }: { task: Task; tasks: Task[]; agents: 
   );
 }
 
-function Composer({ leadName, onSend, busy }: { leadName: string; onSend: (text: string, asTask: boolean, priority: Priority) => Promise<boolean>; busy: boolean }) {
+export function Composer({
+  leadName,
+  onSend,
+  busy,
+  quick = QUICK,
+}: {
+  leadName: string;
+  onSend: (text: string, asTask: boolean, priority: Priority) => Promise<boolean>;
+  busy: boolean;
+  quick?: string[];
+}) {
   const [text, setText] = useState("");
   const [asTask, setAsTask] = useState(false);
   const [priority, setPriority] = useState<Priority>("medium");
@@ -305,7 +315,7 @@ function Composer({ leadName, onSend, busy }: { leadName: string; onSend: (text:
     <div className="border-t border-line bg-white px-3 pb-3 pt-2 sm:px-4">
       {!text && !asTask && (
         <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
-          {QUICK.map((q) => (
+          {quick.map((q) => (
             <button key={q} type="button" onClick={() => void submit(q, false)} disabled={busy} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-ink-soft hover:border-brand hover:text-brand">
               {q}
             </button>
@@ -348,6 +358,7 @@ function Composer({ leadName, onSend, busy }: { leadName: string; onSend: (text:
         <textarea
           id="lead-chat-text"
           ref={box}
+          dir="auto"
           rows={1}
           className="input max-h-40 flex-1 resize-none"
           value={text}

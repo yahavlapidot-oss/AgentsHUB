@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
+import { CHIEF_SETTING } from "./hq";
 import { isProjectMember } from "./project-lead";
 
 export { isProjectMember, projectLead } from "./project-lead";
@@ -151,12 +152,14 @@ export type Snapshot = {
   projects: Project[];
   /** Set while the emergency stop is on. */
   emergencyStop: { at: number; agentIds: string[] } | null;
+  /** The agent you talk to in the HQ chat. */
+  chiefAgentId: string | null;
   generatedAt: number;
 };
 
 /** Everything the live board needs in one round trip. */
 export async function getSnapshot(): Promise<Snapshot> {
-  const [a, t, e, m, ap, p, stop] = await Promise.all([
+  const [a, t, e, m, ap, p, stop, chief] = await Promise.all([
     getAgents(),
     getTasks(),
     getEvents({ limit: 60 }),
@@ -164,8 +167,9 @@ export async function getSnapshot(): Promise<Snapshot> {
     getApprovals({ pendingOnly: true }),
     getProjects(),
     getEmergencyStop(),
+    getChiefAgentId(),
   ]);
-  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, emergencyStop: stop, generatedAt: Date.now() };
+  return { agents: a, tasks: t, events: e, messages: m, approvals: ap, projects: p, emergencyStop: stop, chiefAgentId: chief, generatedAt: Date.now() };
 }
 
 export type UsageRow = { key: string; runs: number; tokensIn: number; tokensOut: number; costUsd: number };
@@ -764,6 +768,17 @@ export async function setSetting(key: string, value: unknown | null): Promise<vo
     .insert(settings)
     .values({ key, value, updatedAt: Date.now() })
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: Date.now() } });
+}
+
+/** The chief of staff, if one is picked and still exists. */
+export async function getChiefAgentId(): Promise<string | null> {
+  const id = await getSetting<string>(CHIEF_SETTING);
+  if (!id) return null;
+  return (await getAgent(id)) ? id : null;
+}
+
+export async function setChiefAgentId(agentId: string | null): Promise<void> {
+  await setSetting(CHIEF_SETTING, agentId);
 }
 
 export async function getEmergencyStop(): Promise<StopState | null> {

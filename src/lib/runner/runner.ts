@@ -26,6 +26,8 @@ import {
   endRun,
   getAgentMemories,
   getAgents,
+  getApprovals,
+  getChiefAgentId,
   getCommands,
   getEmergencyStop,
   getHostedAgents,
@@ -50,7 +52,8 @@ import {
 } from "../data";
 import { runHousekeeping } from "../jobs";
 import { searchMemory, type MemorySource } from "../memory";
-import { runDueSchedules } from "../schedules";
+import { describeTiming, getSchedules, runDueSchedules } from "../schedules";
+import { HQ_CHANNEL } from "../hq";
 import { budgetProblem } from "../budgets";
 import { recordProblem, runnerStarted, runnerTicked } from "../monitor";
 import { boardLink, notifyByEmail } from "../notify";
@@ -65,6 +68,8 @@ const TICK_MS = Number(process.env.RUNNER_TICK_MS ?? 10_000);
 const MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS ?? 40);
 const POLL_MS = 5_000;
 const INBOX_MAX_TURNS = 10;
+/** The chief of staff may look things up before answering. */
+const CHIEF_MAX_TURNS = 16;
 /** Caps how often messages can wake one agent, so two agents can't chat each other into a big bill. */
 const MAX_WAKES_PER_HOUR = Number(process.env.RUNNER_MAX_WAKES_PER_HOUR ?? 12);
 
@@ -110,12 +115,21 @@ const PROJECT_CHAT = (p: Project) => `You are the work manager of the project "$
 - When the user asks how things are going, answer from the project's tasks below: what's done, what's in progress and by whom, what's blocked or waiting on them. Be short and specific.
 - If something is unclear, ask one short question instead of guessing.`;
 
-function systemFor(agent: Agent, base: string, opts: { computer?: boolean; lead?: boolean; chat?: Project | null } = {}): string {
+const CHIEF = `You are your user's chief of staff: the one agent they talk to about everything, above all projects, in the HQ chat. Your replies with send_message go to that chat; leave toAgentId empty when you answer the user.
+- Reply in the user's language, short and specific, like a capable assistant on a messaging app.
+- When the user asks for work, turn it into tasks right away with create_task: put each in the project it belongs to (projectId from the overview; none if it fits no project), give it an owner whose skills fit, or the project's work manager for anything that needs planning, and say what "done" means. Then tell the user in a line or two who is doing what.
+- For something recurring ("every morning…", "each Sunday…"), set it up with schedule_task and confirm when it will run.
+- Quick questions you can answer yourself (a fact, a short lookup with web_search, where things stand) you answer directly, without making a task.
+- When asked how things are going, answer from the overview below: what got done, what's in progress and by whom, what's blocked or waiting on the user (approvals included). Lead with what needs them.
+- If a request is unclear or risky, ask one short question instead of guessing.`;
+
+function systemFor(agent: Agent, base: string, opts: { computer?: boolean; lead?: boolean; chat?: Project | null; chief?: boolean } = {}): string {
   return [
     base,
     opts.computer === undefined ? null : opts.computer ? COMPUTER : NO_COMPUTER,
-    (agent.role === "lead" || opts.lead) && LEAD,
+    (agent.role === "lead" || opts.lead) && !opts.chief && LEAD,
     opts.chat && PROJECT_CHAT(opts.chat),
+    opts.chief && CHIEF,
     agent.instructions && `Your own instructions from the user:\n${agent.instructions}`,
   ]
     .filter(Boolean)
@@ -581,24 +595,34 @@ export async function runInbox(agent: Agent, waiting: Message[]): Promise<void> 
 
 async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promise<"success" | "failed" | "cancelled"> {
   const tools = toolsForAgent(agent, { sandbox: false });
-  const [agents, tasks, names] = await Promise.all([getAgents(), getTasks(), agentNames()]);
-  // Woken from a project chat: answer there, in the project's context.
+  const [agents, tasks, names, chiefId] = await Promise.all([getAgents(), getTasks(), agentNames(), getChiefAgentId()]);
+  // Woken from a project chat: answer there, in the project's context. From HQ: as the chief of staff.
   const chatProjectId = [...waiting].reverse().find((m) => m.projectId)?.projectId;
-  const project = chatProjectId ? await getProject(chatProjectId) : null;
+  const chief = chatProjectId === HQ_CHANNEL && chiefId === agent.id;
+  const project = chatProjectId && chatProjectId !== HQ_CHANNEL ? await getProject(chatProjectId) : null;
   const leadsProject = Boolean(project && projectLead(project, agents)?.id === agent.id);
   const chat = createChat({
     provider: agent.provider,
     model: agent.model,
-    system: systemFor(agent, INBOX, { lead: leadsProject, chat: leadsProject ? project : null }),
+    system: systemFor(agent, INBOX, { lead: leadsProject, chat: leadsProject ? project : null, chief }),
     tools,
   });
-  const ctx: ToolContext = { agent, runId, projectId: project?.id ?? null, taint: { tainted: false, sources: [] }, waitForApproval: (gate) => waitForDecision(agent, gate) };
+  const ctx: ToolContext = {
+    agent,
+    runId,
+    projectId: project?.id ?? null,
+    chatChannel: chief ? HQ_CHANNEL : null,
+    taint: { tainted: false, sources: [] },
+    waitForApproval: (gate) => waitForDecision(agent, gate),
+  };
   const executor = new ToolExecutor(tools, ctx, { runId });
   const mine = tasks.filter((t) => t.ownerAgentId === agent.id && t.column !== "done");
-  let input: { text?: string; toolOutputs?: ToolOutput[] } = { text: await inboxBrief(agent, waiting, { agents, mine, names, project, tasks }) };
+  let input: { text?: string; toolOutputs?: ToolOutput[] } = {
+    text: await inboxBrief(agent, waiting, { agents, mine, names, project, tasks, hq: chief }),
+  };
   let lastInboxCheck = Date.now();
 
-  for (let turn = 0; turn < INBOX_MAX_TURNS; turn++) {
+  for (let turn = 0; turn < (chief ? CHIEF_MAX_TURNS : INBOX_MAX_TURNS); turn++) {
     const res = await chat.send(input);
     await addUsage(agent.id, runId, {
       tokensIn: res.usage.tokensIn,
@@ -629,15 +653,16 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
 export async function inboxBrief(
   agent: Agent,
   waiting: Message[],
-  ctx: { agents: PublicAgent[]; mine: Task[]; names: Map<string, string>; project?: Project | null; tasks?: Task[] },
+  ctx: { agents: PublicAgent[]; mine: Task[]; names: Map<string, string>; project?: Project | null; tasks?: Task[]; hq?: boolean },
   budget = BRIEF_TOKENS,
 ): Promise<string> {
   const project = ctx.project ?? null;
-  const [earlier, memories, notes] = await Promise.all([
-    // In a project chat, the conversation before is that chat's.
-    getMessages(project ? { projectId: project.id, limit: 30 } : { agentId: agent.id, limit: 30 }),
+  const [earlier, memories, notes, overview] = await Promise.all([
+    // In a project chat (or HQ), the conversation before is that chat's.
+    getMessages(project ? { projectId: project.id, limit: 30 } : ctx.hq ? { projectId: HQ_CHANNEL, limit: 30 } : { agentId: agent.id, limit: 30 }),
     getAgentMemories(agent.id),
     getNotes(),
+    ctx.hq ? hqOverview(ctx.tasks ?? [], ctx.agents) : null,
   ]);
   const newIds = new Set(waiting.map((m) => m.id));
   const before = earlier.filter((m) => !newIds.has(m.id)).slice(-12);
@@ -652,6 +677,7 @@ export async function inboxBrief(
         text: before.length && `Your conversation before these messages (oldest first):\n${before.map((m) => `- ${describeSent(m, agent, ctx.names)}`).join("\n")}`,
       },
       { name: "the project", cuttable: true, moreWith: "list_projects", text: project && projectChatLine(project, ctx.tasks ?? [], ctx.agents) },
+      { name: "the overview", cuttable: true, moreWith: "list_tasks", text: overview },
       {
         name: "your open tasks",
         cuttable: true,
@@ -682,6 +708,26 @@ function projectChatLine(p: Project, tasks: Task[], agents: PublicAgent[]): stri
     `Agents who may work on it: ${team.join("; ") || "none"}`,
     mine.length ? `Its tasks, latest first:\n${rows.join("\n")}${mine.length > 60 ? `\n…and ${mine.length - 60} more` : ""}` : "It has no tasks yet.",
   ].join("\n");
+}
+
+/** What the chief of staff needs: every active project, open work by state, approvals waiting, and today's spend. */
+async function hqOverview(tasks: Task[], agents: PublicAgent[]): Promise<string> {
+  const [projects, approvals, schedules] = await Promise.all([getProjects(), getApprovals({ pendingOnly: true }), getSchedules()]);
+  const name = (id: string | null) => agents.find((a) => a.id === id)?.name ?? "unassigned";
+  const dayAgo = Date.now() - 24 * 60 * 60_000;
+  const open = tasks.filter((t) => t.column !== "done").sort((a, b) => b.updatedAt - a.updatedAt);
+  const row = (t: Task) => `- ${t.title} (${t.id}) [${t.column}, ${t.progressPct}%, ${name(t.ownerAgentId)}]${t.projectId ? ` in ${t.projectId}` : ""}`;
+  const done = tasks.filter((t) => (t.column === "done" || t.column === "review") && t.updatedAt > dayAgo);
+  return [
+    `Projects:\n${projects.map((p) => `- ${p.name} (${p.id}) [${p.status}], work manager: ${p.leadAgentId ? name(p.leadAgentId) : "team lead"}${p.goal ? `, goal: ${p.goal.slice(0, 200)}` : ""}`).join("\n") || "none"}`,
+    `Agents: ${agents.map((a) => `${a.name} (${a.id}${a.role === "lead" ? ", team lead" : ""}, skills: ${a.skills.join(", ") || "general"}, ${a.status})`).join("; ") || "none"}`,
+    approvals.length ? `Waiting for the user's approval:\n${approvals.map((a) => `- ${name(a.agentId)}: ${a.action}`).join("\n")}` : "No approvals waiting.",
+    `Open tasks, latest first:\n${open.slice(0, 50).map(row).join("\n") || "none"}${open.length > 50 ? `\n…and ${open.length - 50} more` : ""}`,
+    done.length ? `Finished in the last day:\n${done.slice(0, 20).map(row).join("\n")}` : "Nothing finished in the last day.",
+    schedules.length ? `Schedules:\n${schedules.map((s) => `- ${s.title} (${s.id}): ${describeTiming(s)}${s.enabled ? "" : " (paused)"}`).join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function describeSent(m: Message, agent: Agent, names: Map<string, string>): string {

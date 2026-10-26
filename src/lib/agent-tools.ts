@@ -305,7 +305,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       priority: z.enum(PRIORITIES).optional(),
       projectId: z.string().optional(),
     }),
-    run: async (input, { agent, projectId, taskId }) => {
+    run: async (input, { agent, projectId, taskId, chatChannel }) => {
       const task = await createTask({
         ...input,
         ownerAgentId: input.ownerAgentId || null,
@@ -313,9 +313,10 @@ export const AGENT_TOOLS: AgentTool[] = [
         column: "ready",
         createdBy: agent.id,
       });
-      // Tasks made while chatting show up in the project chat, where the user asked for them.
-      if (projectId && !taskId && task.projectId === projectId) {
-        await postMessage({ fromAgentId: agent.id, projectId, taskId: task.id, text: `New task: ${task.title}` });
+      // Tasks made while chatting show up in the chat where the user asked for them.
+      const chatAt = chatChannel ?? (projectId && task.projectId === projectId ? projectId : null);
+      if (chatAt && !taskId) {
+        await postMessage({ fromAgentId: agent.id, projectId: chatAt, taskId: task.id, text: `New task: ${task.title}` });
       }
       return { task: compactTask(task) };
     },
@@ -611,7 +612,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         fromAgentId: ctx.agent.id,
         toAgentId: toAgentId || null,
         taskId: taskId || null,
-        projectId: projectId || ctx.projectId || null,
+        projectId: projectId || ctx.projectId || ctx.chatChannel || null,
         text,
       }),
     }),

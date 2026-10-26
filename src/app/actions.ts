@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { setMonthlyCap } from "@/lib/budgets";
+import { HQ_CHANNEL } from "@/lib/hq";
 import * as data from "@/lib/data";
 import { diffLines, toHunks } from "@/lib/diff";
 import { cleanDisabledTools } from "@/lib/tool-hub";
@@ -82,6 +83,32 @@ export async function sendToLeadAction(projectId: string, input: z.input<typeof 
   }
   await data.postMessage({ fromAgentId: null, toAgentId: lead.id, projectId, taskId, text });
   return { taskId };
+}
+
+/** Writes to the chief of staff in the HQ chat. As a task, it goes to the chief to place and hand out. */
+export async function sendToChiefAction(input: z.input<typeof LeadMessage>) {
+  const { text, asTask, priority } = LeadMessage.parse(input);
+  const chiefId = await data.getChiefAgentId();
+  if (!chiefId) throw new Error("Pick your chief of staff first");
+  let taskId: string | null = null;
+  if (asTask) {
+    const [first, ...rest] = text.split("\n");
+    const task = await data.createTask({
+      title: first.trim().slice(0, 300),
+      description: rest.join("\n").trim(),
+      priority,
+      ownerAgentId: chiefId,
+      column: "ready",
+      createdBy: "user",
+    });
+    taskId = task.id;
+  }
+  await data.postMessage({ fromAgentId: null, toAgentId: chiefId, projectId: HQ_CHANNEL, taskId, text });
+  return { taskId };
+}
+
+export async function setChiefAction(agentId: string | null) {
+  await data.setChiefAgentId(agentId);
 }
 
 export async function setProjectLeadAction(projectId: string, agentId: string | null) {

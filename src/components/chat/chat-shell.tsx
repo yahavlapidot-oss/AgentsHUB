@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AGENT_STATUS_META, timeAgo } from "@/lib/format";
+import { HQ_CHANNEL } from "@/lib/hq";
 import { projectLead } from "@/lib/project-lead";
 import { useLive } from "../live";
 import { AgentAvatar } from "../ui";
@@ -25,7 +26,7 @@ export function ChatShell({ children }: { children: React.ReactNode }) {
 }
 
 function ChatList({ path }: { path: string }) {
-  const { projects, agents, tasks, messages } = useLive();
+  const { projects, agents, tasks, messages, chiefAgentId } = useLive();
   const order = { active: 0, paused: 1, done: 2 } as const;
   const rows = projects
     .map((p) => {
@@ -33,7 +34,9 @@ function ChatList({ path }: { path: string }) {
       return { p, lead: projectLead(p, agents), last, open: tasks.filter((t) => t.projectId === p.id && t.column !== "done").length };
     })
     .sort((a, b) => order[a.p.status] - order[b.p.status] || (b.last?.at ?? b.p.updatedAt) - (a.last?.at ?? a.p.updatedAt));
-  const teamLast = messages.at(-1);
+  const teamLast = messages.filter((m) => m.projectId !== HQ_CHANNEL).at(-1);
+  const hqLast = messages.filter((m) => m.projectId === HQ_CHANNEL).at(-1);
+  const chief = agents.find((a) => a.id === chiefAgentId) ?? null;
   const name = (id: string | null) => (id ? agents.find((a) => a.id === id)?.name ?? "Agent" : "You");
 
   return (
@@ -43,6 +46,23 @@ function ChatList({ path }: { path: string }) {
         <p className="mt-0.5 text-sm text-ink-soft">Each project&apos;s work manager. Ask for status or hand out tasks.</p>
       </header>
       <ul className="min-h-0 flex-1 overflow-y-auto">
+        <li>
+          <Link
+            href="/chat/hq"
+            className={`flex items-center gap-3 border-b border-line px-4 py-3 ${path === "/chat/hq" ? "bg-brand-soft" : "hover:bg-canvas active:bg-canvas"}`}
+          >
+            {chief ? <AgentAvatar agent={chief} size={42} /> : <span className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-full bg-brand text-lg text-white">★</span>}
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline gap-2">
+                <span className="font-semibold">HQ · chief of staff</span>
+                {hqLast && <time className="ml-auto shrink-0 text-xs text-ink-faint">{timeAgo(hqLast.at)}</time>}
+              </span>
+              <span className="block truncate text-sm text-ink-soft" dir="auto">
+                {hqLast ? `${name(hqLast.fromAgentId)}: ${hqLast.text}` : chief ? `${chief.name}: one chat for everything` : "Pick one agent to talk to about everything"}
+              </span>
+            </span>
+          </Link>
+        </li>
         {rows.map(({ p, lead, last, open }) => (
           <li key={p.id}>
             <Link
