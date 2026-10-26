@@ -285,3 +285,7 @@ export async function makeReviewerAction(agentId: string) {
   const s = await getQualitySettings();
   await setQualitySettings({ ...s, reviewerAgentId: agentId, mode: s.mode === "off" ? "important" : s.mode });
 }
+
+export async function setAgentCheapModelAction(agentId: string, model: string) {
+  await data.setAgentCheapModel(agentId, z.string().trim().max(100).regex(/^[\w.:/-]*$/).parse(model) || null);
+}

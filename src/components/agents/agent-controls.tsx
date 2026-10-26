@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentAutonomyAction, setAgentRoleAction, setAgentSandboxAction } from "@/app/actions";
+import { deleteAgentAction, rotateTokenAction, sendCommandAction, setAgentAutonomyAction, setAgentCheapModelAction, setAgentRoleAction, setAgentSandboxAction } from "@/app/actions";
+import { PROVIDER_META } from "@/lib/format";
 import { timeAgo } from "@/lib/format";
 import type { AgentRole, Autonomy, Command, Provider } from "@/lib/schema";
 import { connectSnippets } from "@/lib/snippets";
@@ -19,6 +20,7 @@ export function AgentControls({
   autonomy,
   commands,
   sandbox,
+  cheapModel,
 }: {
   agentId: string;
   agentName: string;
@@ -30,6 +32,8 @@ export function AgentControls({
   commands: Command[];
   /** Hosted agents only: whether it may open a cloud computer, and whether the server can provide one. */
   sandbox: { enabled: boolean; ready: boolean } | null;
+  /** Hosted agents only: the cheaper model for chats, low-priority tasks and reviews ("" when unset). */
+  cheapModel: string | null;
 }) {
   const router = useRouter();
   const { refresh } = useLive();
@@ -112,6 +116,8 @@ export function AgentControls({
           {autonomy === "cautious" ? "Switch to standard" : "Make it cautious"}
         </button>
       </section>
+
+      {cheapModel !== null && <CheapModel agentId={agentId} provider={provider} model={model} initial={cheapModel} />}
 
       {sandbox && (
         <section className="card p-4">
@@ -202,5 +208,41 @@ export function AgentControls({
         </Modal>
       )}
     </aside>
+  );
+}
+
+function CheapModel({ agentId, provider, model, initial }: { agentId: string; provider: Provider; model: string; initial: string }) {
+  const router = useRouter();
+  const [value, setValue] = useState(initial);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <section className="card p-4">
+      <h2 className="mb-1 font-semibold">Cheaper model</h2>
+      <p className="mb-3 text-sm text-ink-soft">
+        Chat replies, low-priority tasks and reviews use this model; the rest use {model}. Leave empty to always use {model}.
+      </p>
+      <form
+        className="flex gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setErr(null);
+          try {
+            await setAgentCheapModelAction(agentId, value);
+            router.refresh();
+          } catch {
+            setErr("Couldn't save that model name");
+          }
+        }}
+      >
+        <input className="input font-mono" list="cheap-models" value={value} placeholder="e.g. claude-haiku-5-5" onChange={(e) => setValue(e.target.value)} />
+        <datalist id="cheap-models">
+          {PROVIDER_META[provider].models.filter((m) => m !== model).map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+        <button type="submit" className="btn-ghost border border-line">Save</button>
+      </form>
+      {err && <p className="mt-2 text-xs text-[#d83a52]">{err}</p>}
+    </section>
   );
 }

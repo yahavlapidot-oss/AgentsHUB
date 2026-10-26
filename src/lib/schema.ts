@@ -35,6 +35,8 @@ export const agents = sqliteTable("agents", {
   provider: text("provider", { enum: PROVIDERS }).notNull(),
   kind: text("kind", { enum: AGENT_KINDS }).notNull().default("sdk"),
   model: text("model").notNull(),
+  /** Hosted agents: a cheaper model for chat replies, low-priority tasks and reviews. */
+  cheapModel: text("cheap_model"),
   machine: text("machine"),
   skills: text("skills", { mode: "json" }).$type<string[]>().notNull().default([]),
   /** System prompt for hosted agents. */
@@ -117,6 +119,10 @@ export const runs = sqliteTable(
     tokensIn: integer("tokens_in").notNull().default(0),
     tokensOut: integer("tokens_out").notNull().default(0),
     costUsd: real("cost_usd").notNull().default(0),
+    /** Input tokens read from the provider's prompt cache (part of tokensIn). */
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    /** What prompt caching and the cheaper model saved, against the full price on the agent's main model. */
+    savedUsd: real("saved_usd").notNull().default(0),
   },
   (t) => [index("runs_agent_idx").on(t.agentId), index("runs_task_idx").on(t.taskId), index("runs_started_idx").on(t.startedAt)],
 );

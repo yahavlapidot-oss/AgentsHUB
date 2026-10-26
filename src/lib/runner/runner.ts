@@ -57,14 +57,15 @@ import { HQ_CHANNEL } from "../hq";
 import { budgetProblem } from "../budgets";
 import { recordProblem, runnerStarted, runnerTicked } from "../monitor";
 import { boardLink, notify } from "../notify";
-import { costUsd } from "../pricing";
+import { turnCost } from "../pricing";
+import { isReviewTask } from "../quality";
 import { sandboxesAvailable } from "../sandbox/provider";
 import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
 import { servicesFor } from "../connections";
 import { mcpToolsFor } from "../mcp-client";
 import { ToolExecutor, toolsForAgent } from "../tool-hub";
 import type { Agent, AgentMemory, ArtifactInfo, Message, Project, PublicAgent, Task } from "../schema";
-import { createChat, MissingKeyError, type ToolOutput } from "./providers";
+import { createChat, MissingKeyError, type ToolOutput, type Turn } from "./providers";
 
 const TICK_MS = Number(process.env.RUNNER_TICK_MS ?? 10_000);
 const MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS ?? 40);
@@ -250,7 +251,7 @@ export async function runTask(agent: Agent, task: Task): Promise<void> {
     if (e instanceof ConflictError) return; // someone else took it first
     throw e;
   }
-  const run = await startRun(agent.id, { taskId: task.id, model: agent.model });
+  const run = await startRun(agent.id, { taskId: task.id, model: modelFor(agent, { task }) });
   const computer = agent.sandboxEnabled && (await sandboxesAvailable());
   const sandbox = computer ? new SandboxSession({ agentId: agent.id, taskId: task.id, runId: run.id }) : undefined;
   let outcome: "success" | "failed" | "cancelled" = "failed";
@@ -266,6 +267,23 @@ export async function runTask(agent: Agent, task: Task): Promise<void> {
     await endRun(agent.id, run.id, outcome);
     await heartbeat(agent.id, { currentTaskId: null });
   }
+}
+
+/** A turn's tokens and cost, with what caching and the cheaper model saved. */
+function usageOf(agent: Agent, res: Turn) {
+  const { costUsd, savedUsd } = turnCost({ model: res.model, mainModel: agent.model, ...res.usage });
+  return { tokensIn: res.usage.tokensIn, tokensOut: res.usage.tokensOut, costUsd, savedUsd, cachedTokens: res.usage.cacheRead ?? 0 };
+}
+
+/**
+ * Which model a run uses. With a cheaper model set, chat replies, low-priority
+ * tasks and reviews go to it; everything else uses the agent's main model.
+ */
+export function modelFor(agent: Pick<Agent, "model" | "cheapModel">, work: { inbox?: boolean; task?: Pick<Task, "priority" | "createdBy"> }): string {
+  if (!agent.cheapModel) return agent.model;
+  if (work.inbox) return agent.cheapModel;
+  if (work.task && (work.task.priority === "low" || isReviewTask(work.task))) return agent.cheapModel;
+  return agent.model;
 }
 
 /** Built-in tools plus the agent's connected accounts and MCP servers. An MCP server that's down is noted and skipped. */
@@ -294,7 +312,7 @@ async function loop(
   const leadsProject = Boolean(project && projectLead(project, await getAgents())?.id === agent.id);
   const chat = createChat({
     provider: agent.provider,
-    model: agent.model,
+    model: modelFor(agent, { task }),
     system: systemFor(agent, SYSTEM, { computer: Boolean(sandbox), lead: leadsProject }),
     tools,
   });
@@ -317,11 +335,7 @@ async function loop(
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const res = await chat.send(input);
-    await addUsage(agent.id, runId, {
-      tokensIn: res.usage.tokensIn,
-      tokensOut: res.usage.tokensOut,
-      costUsd: costUsd(res.model, res.usage.tokensIn, res.usage.tokensOut),
-    });
+    await addUsage(agent.id, runId, usageOf(agent, res));
     await heartbeat(agent.id, { status: "active", currentTaskId: task.id, model: res.model });
 
     if (res.stopProblem) {
@@ -591,7 +605,7 @@ function describeMessage(m: Message, names: Map<string, string>, currentTaskId?:
 export async function runInbox(agent: Agent, waiting: Message[]): Promise<void> {
   // Mark first, so a crash doesn't wake the agent for the same messages again and again.
   await markInboxRead(agent.id, waiting[waiting.length - 1].at);
-  const run = await startRun(agent.id, { taskId: null, model: agent.model });
+  const run = await startRun(agent.id, { taskId: null, model: modelFor(agent, { inbox: true }) });
   let outcome: "success" | "failed" | "cancelled" = "failed";
   try {
     outcome = await inboxLoop(agent, waiting, run.id);
@@ -615,7 +629,7 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
   const leadsProject = Boolean(project && projectLead(project, agents)?.id === agent.id);
   const chat = createChat({
     provider: agent.provider,
-    model: agent.model,
+    model: modelFor(agent, { inbox: true }),
     system: systemFor(agent, INBOX, { lead: leadsProject, chat: leadsProject ? project : null, chief }),
     tools,
   });
@@ -636,11 +650,7 @@ async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promi
 
   for (let turn = 0; turn < (chief ? CHIEF_MAX_TURNS : INBOX_MAX_TURNS); turn++) {
     const res = await chat.send(input);
-    await addUsage(agent.id, runId, {
-      tokensIn: res.usage.tokensIn,
-      tokensOut: res.usage.tokensOut,
-      costUsd: costUsd(res.model, res.usage.tokensIn, res.usage.tokensOut),
-    });
+    await addUsage(agent.id, runId, usageOf(agent, res));
     await heartbeat(agent.id, { status: "active", currentTaskId: null, model: res.model });
     if (res.stopProblem) {
       await addEvent({ agentId: agent.id, runId, type: "error", payload: { text: res.stopProblem } });

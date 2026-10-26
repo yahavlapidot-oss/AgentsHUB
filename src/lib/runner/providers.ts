@@ -17,7 +17,8 @@ export type ToolOutput = { id: string; name: string; output: string; isError?: b
 export type Turn = {
   text: string;
   toolCalls: ToolCall[];
-  usage: { tokensIn: number; tokensOut: number };
+  /** tokensIn includes cacheRead and cacheWrite (tokens read from and written to the prompt cache). */
+  usage: { tokensIn: number; tokensOut: number; cacheRead?: number; cacheWrite?: number };
   /** The model that actually answered (a fallback may differ from the one asked for). */
   model: string;
   /** Set when the provider stopped for a reason other than finishing or calling tools. */
@@ -92,6 +93,8 @@ class ClaudeChat implements Chat {
         input_schema: t.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
       })),
       messages: this.messages,
+      // Automatic prompt caching: the tools, instructions and history so far are read back at a fraction of the price next turn.
+      cache_control: { type: "ephemeral" },
       ...(fallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     });
     // Keep the whole content (thinking and tool_use blocks included) for the next request.
@@ -113,7 +116,12 @@ class ClaudeChat implements Chat {
       text,
       toolCalls,
       model: res.model,
-      usage: { tokensIn: totalInput(res.usage), tokensOut: res.usage.output_tokens },
+      usage: {
+        tokensIn: totalInput(res.usage),
+        tokensOut: res.usage.output_tokens,
+        cacheRead: res.usage.cache_read_input_tokens ?? 0,
+        cacheWrite: res.usage.cache_creation_input_tokens ?? 0,
+      },
       stopProblem,
     };
   }
@@ -166,7 +174,12 @@ class OpenAIChat implements Chat {
       text: res.output_text ?? "",
       toolCalls,
       model: res.model,
-      usage: { tokensIn: res.usage?.input_tokens ?? 0, tokensOut: res.usage?.output_tokens ?? 0 },
+      usage: {
+        tokensIn: res.usage?.input_tokens ?? 0,
+        tokensOut: res.usage?.output_tokens ?? 0,
+        // OpenAI caches long prompts by itself; cached tokens are billed at a discount.
+        cacheRead: res.usage?.input_tokens_details?.cached_tokens ?? 0,
+      },
       stopProblem,
     };
   }
@@ -230,6 +243,7 @@ class GeminiChat implements Chat {
       usage: {
         tokensIn: res.usageMetadata?.promptTokenCount ?? 0,
         tokensOut: (res.usageMetadata?.candidatesTokenCount ?? 0) + (res.usageMetadata?.thoughtsTokenCount ?? 0),
+        cacheRead: res.usageMetadata?.cachedContentTokenCount ?? 0,
       },
       stopProblem,
     };

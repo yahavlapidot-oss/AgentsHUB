@@ -4,7 +4,7 @@
  * touching components.
  */
 import { createHash } from "node:crypto";
-import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { newId } from "./ids";
 import { CHIEF_SETTING, HQ_CHANNEL } from "./hq";
@@ -240,6 +240,10 @@ export async function setAgentDisabledTools(agentId: string, names: string[]): P
 
 export async function setAgentAutonomy(agentId: string, autonomy: Agent["autonomy"]): Promise<void> {
   await db.update(agents).set({ autonomy }).where(eq(agents.id, agentId));
+}
+
+export async function setAgentCheapModel(agentId: string, model: string | null): Promise<void> {
+  await db.update(agents).set({ cheapModel: model?.trim() || null }).where(eq(agents.id, agentId));
 }
 
 export async function setAgentSandbox(agentId: string, enabled: boolean): Promise<void> {
@@ -577,7 +581,7 @@ export async function startRun(agentId: string, input: { taskId?: string | null;
 export async function addUsage(
   agentId: string,
   runId: string,
-  usage: { tokensIn: number; tokensOut: number; costUsd?: number },
+  usage: { tokensIn: number; tokensOut: number; costUsd?: number; cachedTokens?: number; savedUsd?: number },
 ): Promise<void> {
   const cost = usage.costUsd ?? 0;
   await db
@@ -586,6 +590,8 @@ export async function addUsage(
       tokensIn: sql`${runs.tokensIn} + ${usage.tokensIn}`,
       tokensOut: sql`${runs.tokensOut} + ${usage.tokensOut}`,
       costUsd: sql`${runs.costUsd} + ${cost}`,
+      cachedTokens: sql`${runs.cachedTokens} + ${usage.cachedTokens ?? 0}`,
+      savedUsd: sql`${runs.savedUsd} + ${usage.savedUsd ?? 0}`,
     })
     .where(and(eq(runs.id, runId), eq(runs.agentId, agentId)));
   await db
@@ -614,6 +620,19 @@ export async function recordUsage(
   await addUsage(agentId, run.id, input);
   await endRun(agentId, run.id, "success");
   return run;
+}
+
+/** What prompt caching and cheaper models saved, and how much input came from the cache. */
+export async function getSavings(since = 0): Promise<{ savedUsd: number; cachedTokens: number; tokensIn: number }> {
+  const [row] = await db
+    .select({
+      savedUsd: sql<number>`coalesce(sum(${runs.savedUsd}), 0)`,
+      cachedTokens: sql<number>`coalesce(sum(${runs.cachedTokens}), 0)`,
+      tokensIn: sql<number>`coalesce(sum(${runs.tokensIn}), 0)`,
+    })
+    .from(runs)
+    .where(gte(runs.startedAt, since));
+  return row ?? { savedUsd: 0, cachedTokens: 0, tokensIn: 0 };
 }
 
 /** Everything spent on a task so far: model tokens and sandbox time, over all runs. */

@@ -3,13 +3,13 @@ import { MonthlyCapForm } from "@/components/monthly-cap";
 import { RefreshOnTick } from "@/components/refresh-on-tick";
 import { AgentAvatar, PageHeader, ProviderTag } from "@/components/ui";
 import { ALERT_AT, getComputerSpend, getMonthStatus, getSpend, getSpendByProject } from "@/lib/budgets";
-import { getAgents, getProjects, getRuns, getUsage, type UsageRow } from "@/lib/data";
+import { getAgents, getProjects, getRuns, getSavings, getUsage, type UsageRow } from "@/lib/data";
 import { compact, timeAgo, usd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function UsagePage() {
-  const [byAgent, byModel, agents, runs, month, allTime, byProject, computersByAgent, computersByModel, projects] = await Promise.all([
+  const [byAgent, byModel, agents, runs, month, allTime, byProject, computersByAgent, computersByModel, projects, savings] = await Promise.all([
     getUsage("agent"),
     getUsage("model"),
     getAgents(),
@@ -20,6 +20,7 @@ export default async function UsagePage() {
     getComputerSpend("agent"),
     getComputerSpend("model"),
     getProjects(),
+    getSavings(),
   ]);
   const share = month.cap ? Math.min(1, month.spent.total / month.cap) : 0;
   const total = byModel.reduce(
@@ -60,12 +61,16 @@ export default async function UsagePage() {
           </>
         )}
       </section>
-      <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-5">
         {[
           ["Tokens in", compact(total.tokensIn)],
           ["Tokens out", compact(total.tokensOut)],
           ["All-time cost", usd(allTime.total)],
           ["Runs", String(total.runs)],
+          [
+            "Saved by caching & cheaper models",
+            `${usd(savings.savedUsd)}${savings.tokensIn ? ` · ${Math.round((savings.cachedTokens / savings.tokensIn) * 100)}% cached` : ""}`,
+          ],
         ].map(([k, v]) => (
           <div key={k} className="bg-white px-4 sm:px-6 py-3">
             <p className="text-xs text-ink-faint">{k}</p>
