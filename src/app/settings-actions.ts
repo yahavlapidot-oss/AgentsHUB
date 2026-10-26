@@ -48,3 +48,21 @@ export async function makeVapidKeysAction() {
 export async function testPushAction(): Promise<void> {
   await pushAlert("Test from AgentsHUB", "Notifications reach this device.", { kind: "digest" });
 }
+
+/** A new authenticator secret to scan. Nothing is saved: you put it in TOTP_SECRET on the server. */
+export async function newTotpSetupAction(): Promise<{ secret: string; uri: string; svg: string }> {
+  const { newTotpSecret, otpauthUri } = await import("@/lib/totp");
+  const { renderSVG } = await import("uqr");
+  const secret = newTotpSecret();
+  const uri = otpauthUri(secret, "dashboard");
+  return { secret, uri, svg: renderSVG(uri) };
+}
+
+export async function checkTotpSetupAction(secret: string, code: string): Promise<boolean> {
+  const { verifyTotp } = await import("@/lib/totp");
+  try {
+    return verifyTotp(secret, code) !== null;
+  } catch {
+    return false;
+  }
+}
