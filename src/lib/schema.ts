@@ -310,6 +310,29 @@ export const schedules = sqliteTable(
   (t) => [index("schedules_next_idx").on(t.nextRunAt)],
 );
 
+export const CONNECTION_SERVICES = ["github", "google", "railway", "mcp"] as const;
+export type ConnectionService = (typeof CONNECTION_SERVICES)[number];
+
+/**
+ * Accounts and servers agents may use: a GitHub token, a Google sign-in, a
+ * Railway token, an MCP server. The secret is encrypted (see src/lib/vault.ts);
+ * `meta` holds what isn't secret (the account name, a server address, scopes).
+ * agentIds limits which agents may use it; empty means every hosted agent.
+ */
+export const connections = sqliteTable("connections", {
+  id: text("id").primaryKey(),
+  service: text("service", { enum: CONNECTION_SERVICES }).notNull(),
+  label: text("label").notNull(),
+  secret: text("secret").notNull().default(""),
+  meta: text("meta", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
+  agentIds: text("agent_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  lastError: text("last_error"),
+  lastUsedAt: integer("last_used_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export type Agent = typeof agents.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -323,6 +346,9 @@ export type AgentMemory = typeof agentMemories.$inferSelect;
 export type Sandbox = typeof sandboxes.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
 export type Schedule = typeof schedules.$inferSelect;
+export type Connection = typeof connections.$inferSelect;
+/** A connection as the UI sees it: never the secret. */
+export type PublicConnection = Omit<Connection, "secret"> & { hasSecret: boolean };
 /** Artifact without its bytes, for lists. */
 export type ArtifactInfo = Omit<Artifact, "content">;
 

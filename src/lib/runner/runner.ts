@@ -60,6 +60,8 @@ import { boardLink, notify } from "../notify";
 import { costUsd } from "../pricing";
 import { sandboxesAvailable } from "../sandbox/provider";
 import { reapOrphanedSandboxes, SandboxSession, WORKDIR } from "../sandbox/session";
+import { servicesFor } from "../connections";
+import { mcpToolsFor } from "../mcp-client";
 import { ToolExecutor, toolsForAgent } from "../tool-hub";
 import type { Agent, AgentMemory, ArtifactInfo, Message, Project, PublicAgent, Task } from "../schema";
 import { createChat, MissingKeyError, type ToolOutput } from "./providers";
@@ -266,6 +268,15 @@ export async function runTask(agent: Agent, task: Task): Promise<void> {
   }
 }
 
+/** Built-in tools plus the agent's connected accounts and MCP servers. An MCP server that's down is noted and skipped. */
+async function agentTools(agent: Agent, opts: { sandbox: boolean; runId: string; taskId?: string }) {
+  const [services, mcp] = await Promise.all([servicesFor(agent.id), mcpToolsFor(agent.id).catch((e: Error) => ({ tools: [], problems: [e.message] }))]);
+  for (const problem of mcp.problems) {
+    await addEvent({ agentId: agent.id, taskId: opts.taskId ?? null, runId: opts.runId, type: "note", payload: { text: `MCP server skipped: ${problem}` } });
+  }
+  return toolsForAgent(agent, { sandbox: opts.sandbox, services, extra: mcp.tools });
+}
+
 async function loop(
   agent: Agent,
   task: Task,
@@ -278,7 +289,7 @@ async function loop(
     await failTask(agent, task, runId, noBudget);
     return "failed";
   }
-  const tools = toolsForAgent(agent, { sandbox: Boolean(sandbox) });
+  const tools = await agentTools(agent, { sandbox: Boolean(sandbox), runId, taskId: task.id });
   const project = task.projectId ? await getProject(task.projectId) : null;
   const leadsProject = Boolean(project && projectLead(project, await getAgents())?.id === agent.id);
   const chat = createChat({
@@ -595,7 +606,7 @@ export async function runInbox(agent: Agent, waiting: Message[]): Promise<void> 
 }
 
 async function inboxLoop(agent: Agent, waiting: Message[], runId: string): Promise<"success" | "failed" | "cancelled"> {
-  const tools = toolsForAgent(agent, { sandbox: false });
+  const tools = await agentTools(agent, { sandbox: false, runId });
   const [agents, tasks, names, chiefId] = await Promise.all([getAgents(), getTasks(), agentNames(), getChiefAgentId()]);
   // Woken from a project chat: answer there, in the project's context. From HQ: as the chief of staff.
   const chatProjectId = [...waiting].reverse().find((m) => m.projectId)?.projectId;

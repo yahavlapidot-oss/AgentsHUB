@@ -9,11 +9,16 @@
 import { AGENT_TOOLS, ToolInputError, type AgentTool, type ToolContext } from "./agent-tools";
 import { addEvent, ConflictError } from "./data";
 import type { Agent } from "./schema";
+import { BROWSER_TOOLS } from "./sandbox/browser";
 import { SANDBOX_LOGGED_TOOLS, SANDBOX_TOOLS } from "./sandbox/tools";
+import type { ConnectionService } from "./schema";
+import { GITHUB_TOOLS } from "./tools/github";
+import { GOOGLE_TOOLS } from "./tools/google";
+import { RAILWAY_TOOLS } from "./tools/railway";
 import { SCHEDULE_TOOLS } from "./tools/schedule";
 import { WEB_TOOLS } from "./tools/web";
 
-export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "web", "computer", "control"] as const;
+export const TOOL_CATEGORIES = ["board", "team", "memory", "files", "web", "connections", "computer", "control"] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
 
 /**
@@ -31,6 +36,8 @@ export type ToolInfo = {
   core?: boolean;
   /** Only for hosted agents with a cloud computer. */
   needsSandbox?: boolean;
+  /** Only for hosted agents that may use a connection to this service (Connections page). */
+  needsConnection?: ConnectionService;
 };
 
 export const CATEGORY_LABELS: Record<ToolCategory, string> = {
@@ -39,6 +46,7 @@ export const CATEGORY_LABELS: Record<ToolCategory, string> = {
   memory: "Memory",
   files: "Files",
   web: "Internet",
+  connections: "Connected accounts",
   computer: "Cloud computer",
   control: "Reporting and approvals",
 };
@@ -75,20 +83,60 @@ export const CATALOG: Record<string, ToolInfo> = {
   pause_schedule: { category: "board", risk: "write" },
   web_search: { category: "web", risk: "external" },
   fetch_page: { category: "web", risk: "external" },
+  browser: { category: "web", risk: "external", needsSandbox: true },
+  github_list_repos: gh("read"),
+  github_read_file: gh("read"),
+  github_search_code: gh("read"),
+  github_list_issues: gh("read"),
+  github_get_issue: gh("read"),
+  github_comment: gh("external"),
+  github_create_issue: gh("external"),
+  github_create_pull_request: gh("external"),
+  railway_projects: rw("read"),
+  railway_deployments: rw("read"),
+  railway_logs: rw("read"),
+  railway_redeploy: rw("external"),
+  gmail_search: gg("read"),
+  gmail_read: gg("read"),
+  gmail_draft: gg("write"),
+  gmail_send: gg("external"),
+  calendar_events: gg("read"),
+  calendar_create_event: gg("external"),
+  drive_search: gg("read"),
+  drive_read: gg("read"),
 };
 
-export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS];
+function gh(risk: ToolRisk): ToolInfo {
+  return { category: "connections", risk, needsConnection: "github" };
+}
+function rw(risk: ToolRisk): ToolInfo {
+  return { category: "connections", risk, needsConnection: "railway" };
+}
+function gg(risk: ToolRisk): ToolInfo {
+  return { category: "connections", risk, needsConnection: "google" };
+}
+
+export const ALL_TOOLS: AgentTool[] = [...AGENT_TOOLS, ...SCHEDULE_TOOLS, ...WEB_TOOLS, ...GITHUB_TOOLS, ...RAILWAY_TOOLS, ...GOOGLE_TOOLS, ...SANDBOX_TOOLS, ...BROWSER_TOOLS];
 
 export function toolInfo(name: string): ToolInfo {
+  if (name.startsWith("mcp_")) return { category: "connections", risk: "external", needsConnection: "mcp" };
   return CATALOG[name] ?? { category: "board", risk: "write" };
 }
 
-/** The tools an agent gets: everything it's allowed, minus what you turned off; sandbox tools only with a sandbox. */
-export function toolsForAgent(agent: Pick<Agent, "disabledTools">, opts: { sandbox: boolean }): AgentTool[] {
+/**
+ * The tools an agent gets: everything it's allowed, minus what you turned off.
+ * Sandbox tools only with a sandbox; account tools only for services the agent
+ * has a connection to; extra holds tools made at run time (MCP servers).
+ */
+export function toolsForAgent(
+  agent: Pick<Agent, "disabledTools">,
+  opts: { sandbox: boolean; services?: Set<ConnectionService>; extra?: AgentTool[] },
+): AgentTool[] {
   const off = new Set(agent.disabledTools);
-  return ALL_TOOLS.filter((t) => {
+  return [...ALL_TOOLS, ...(opts.extra ?? [])].filter((t) => {
     const info = toolInfo(t.name);
     if (info.needsSandbox && !opts.sandbox) return false;
+    if (info.needsConnection && !opts.services?.has(info.needsConnection)) return false;
     return info.core || !off.has(t.name);
   });
 }
