@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const cur = failures.get(ip) ?? { count: 0, since: now };
     cur.count++;
     failures.set(ip, cur);
-    return NextResponse.json({ error: "That code didn't match. Check your phone's clock and try the next one." }, { status: 401 });
+    return NextResponse.json({ error: "That code didn't match. Check your phone's clock and try the next one." }, { status: 403 });
   }
   lastStep = step;
   failures.delete(ip);

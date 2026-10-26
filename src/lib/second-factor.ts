@@ -5,6 +5,8 @@
  * TOTP_SECRET and DASHBOARD_PASSWORD, so changing either signs everyone out.
  */
 export const PASS_COOKIE = "ah_2fa";
+/** Set by the middleware on the code page before the code: the layout then shows the form alone, without the board's data or live updates. */
+export const LOCKED_HEADER = "x-agentshub-locked";
 export const REMEMBER_DAYS = Number(process.env.TOTP_REMEMBER_DAYS ?? 30);
 
 export function secondFactorOn(): boolean {

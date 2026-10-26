@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { PASS_COOKIE, secondFactorOn, validPass } from "./lib/second-factor";
+import { LOCKED_HEADER, PASS_COOKIE, secondFactorOn, validPass } from "./lib/second-factor";
 
 /**
  * The dashboard asks for DASHBOARD_PASSWORD (HTTP Basic auth). In production
@@ -64,8 +64,13 @@ export async function middleware(req: NextRequest) {
 const VERIFY_PATHS = ["/verify", "/api/2fa/verify"];
 
 async function secondFactor(req: NextRequest): Promise<NextResponse> {
-  if (!secondFactorOn() || VERIFY_PATHS.includes(req.nextUrl.pathname)) return NextResponse.next();
-  if (await validPass(req.cookies.get(PASS_COOKIE)?.value)) return NextResponse.next();
+  const headers = new Headers(req.headers);
+  headers.delete(LOCKED_HEADER);
+  if (!secondFactorOn() || (await validPass(req.cookies.get(PASS_COOKIE)?.value))) return NextResponse.next({ request: { headers } });
+  if (VERIFY_PATHS.includes(req.nextUrl.pathname)) {
+    headers.set(LOCKED_HEADER, "1");
+    return NextResponse.next({ request: { headers } });
+  }
   const page = req.method === "GET" && !req.nextUrl.pathname.startsWith("/api/") && (req.headers.get("accept") ?? "").includes("text/html");
   if (page) {
     const url = req.nextUrl.clone();
@@ -73,7 +78,9 @@ async function secondFactor(req: NextRequest): Promise<NextResponse> {
     url.search = `?next=${encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search)}`;
     return NextResponse.redirect(url);
   }
-  return NextResponse.json({ error: "Enter your authenticator code at /verify first" }, { status: 401 });
+  // 403, not 401: a 401 makes the browser forget the password it saved and
+  // ask for it again, over and over, while the code page is open.
+  return NextResponse.json({ error: "Enter your authenticator code at /verify first" }, { status: 403 });
 }
 
 /** Compares without stopping at the first different character, so timing doesn't leak the password. */

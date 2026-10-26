@@ -49,12 +49,23 @@ describe("dashboard password", () => {
     const redirect = await middleware(page("/usage?x=1"));
     expect(redirect.status).toBe(307);
     expect(redirect.headers.get("location")).toBe("http://localhost/verify?next=%2Fusage%3Fx%3D1");
-    expect((await middleware(page("/verify"))).status).toBe(200);
-    expect((await middleware(new NextRequest("http://localhost/api/ui/snapshot", { headers: { authorization: basic("s3cret-pass") } }))).status).toBe(401);
+    const verify = await middleware(page("/verify"));
+    expect(verify.status).toBe(200);
+    // The code page renders without the board's data or live updates.
+    expect(verify.headers.get("x-middleware-request-x-agentshub-locked")).toBe("1");
+    // 403, never 401: a 401 makes the browser drop the saved password and ask again.
+    const api = await middleware(new NextRequest("http://localhost/api/ui/snapshot", { headers: { authorization: basic("s3cret-pass") } }));
+    expect(api.status).toBe(403);
+    expect(api.headers.get("www-authenticate")).toBeNull();
 
     const { makePass, validPass, PASS_COOKIE } = await import("../src/lib/second-factor");
     const pass = await makePass();
     expect((await middleware(page("/usage", `${PASS_COOKIE}=${pass.value}`))).status).toBe(200);
+    // A request can't pass the lock header in itself.
+    const spoofed = await middleware(
+      new NextRequest("http://localhost/usage", { headers: { authorization: basic("s3cret-pass"), cookie: `${PASS_COOKIE}=${pass.value}`, "x-agentshub-locked": "1" } }),
+    );
+    expect(spoofed.headers.get("x-middleware-request-x-agentshub-locked")).toBeNull();
     expect(await validPass(pass.value.replace(/.$/, (c) => (c === "0" ? "1" : "0")))).toBe(false);
     expect(await validPass(pass.value, Date.now() + 31 * 86_400_000)).toBe(false);
     // A new secret signs everyone out.
