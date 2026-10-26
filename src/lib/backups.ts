@@ -1,6 +1,6 @@
 /**
  * Daily copies of the database next to it (BACKUP_DIR, default <db folder>/backups),
- * the last BACKUP_KEEP (7) kept. Uses SQLite's VACUUM INTO, which writes a
+ * the last BACKUP_DAILY_KEEP (7) kept. Uses SQLite's VACUUM INTO, which writes a
  * clean, consistent copy while the app keeps running. They guard against bad
  * data and mistakes; to also survive losing the disk, download one now and then
  * or turn on Railway's volume backups.
@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 
-const KEEP = Math.max(1, Number(process.env.BACKUP_KEEP ?? 7));
+const KEEP = Math.max(1, Number(process.env.BACKUP_DAILY_KEEP ?? 7));
 const NAME = /^agentshub-\d{4}-\d{2}-\d{2}\.db$/;
 
 export type BackupInfo = { name: string; bytes: number; at: number };

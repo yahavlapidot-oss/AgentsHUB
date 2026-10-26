@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 const dir = mkdtempSync(join(tmpdir(), "agentshub-backup-"));
 process.env.DATABASE_URL = `file:${join(dir, "test.db")}`;
-process.env.BACKUP_KEEP = "2";
+process.env.BACKUP_DAILY_KEEP = "2";
 
 let backups: typeof import("../src/lib/backups");
 let data: typeof import("../src/lib/data");

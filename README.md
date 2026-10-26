@@ -13,8 +13,12 @@ Any agent that can make an HTTP request can report to it. The connect screen has
 - **Usage & costs**: spend this month against your monthly cap, split into models and cloud computers, per agent, per model and per project, plus recent runs.
 - **Files**: everything agents delivered, filtered by project, review status and who made each version.
 - **Approvals**: agents ask here before risky steps. Their task moves to *Waiting on you* until you approve or deny.
+- **HQ chat and chief of staff**: one chat above all projects. Your chief of staff answers, turns requests into tasks for the right agent and follows up. It's also on Telegram.
+- **Schedules**: recurring work (every morning, every Monday, the 1st of the month) that lands in Ready for the agent you pick.
+- **Connections**: GitHub, Google (Gmail, Calendar, Drive), Railway and any MCP server, stored encrypted, each limited to the agents you choose.
+- **Settings**: the daily digest, Telegram, phone notifications, the quality check, two-step sign-in and backups.
 
-The board refreshes every few seconds.
+Changes show up as they happen: the server pushes them to every open tab (Server-Sent Events), with polling as a fallback.
 
 **On a phone** the sidebar becomes tabs at the bottom (Board, Live, Approvals, Agents, More) with the stop button at the top. Tasks show as cards, Kanban columns swipe, forms open from the bottom of the screen, and fields are big enough to tap. Add it to your home screen (Share → Add to Home Screen on iPhone, or Install app on Android) and it opens like an app, without the browser bar.
 
@@ -56,6 +60,32 @@ The dashboard password doesn't apply to the agent API (`/api/v1/*`). Each agent 
 ### Email alerts
 
 AgentsHUB can email you when an agent asks for approval, finishes a task, gets stuck, or reports an error. Create a free [Resend](https://resend.com) account, then set `RESEND_API_KEY` and `NOTIFY_EMAIL`. The default sender only reaches the email address on your Resend account. To send from your own address, verify a domain in Resend and set `NOTIFY_FROM`.
+
+## Your personal team
+
+What turns the board into a team that works for you while you're away. Each part is optional and costs nothing until you use it.
+
+| Feature | What it does | What you set | Cost |
+|---|---|---|---|
+| **Chief of staff** (HQ chat) | One chat for everything. It answers, creates tasks for the right agent and reports back. Pick it in the HQ chat or with the *Chief of staff* template. | A hosted agent | Its model's tokens |
+| **Telegram** | Talk to the chief of staff from your phone (text or voice), get alerts, approve with a button, `/status`, `/approvals`, `/stop`. Settings walks you through it. | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Free |
+| **Phone notifications** | Web Push to the installed app for approvals, finished work and problems. | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (Settings makes them) | Free |
+| **Daily digest** | Each morning: what got done, what waits on you, what's in progress, what it cost. By email, Telegram and push. | Time and time zone in Settings | Free (no model call) |
+| **Schedules** | Recurring tasks. Agents can schedule work too (at most hourly). | Schedules page | The runs' tokens |
+| **Web search and pages** | `web_search` and `fetch_page` for every hosted agent. Uses Tavily or Brave if you set a key, otherwise Claude's web search. | Optional `TAVILY_API_KEY` or `BRAVE_SEARCH_API_KEY` | Claude search: $0.01 a search plus tokens |
+| **Browser** | A real Chromium in the agent's cloud computer for pages that need clicks and forms; screenshots become files. | Cloud computer on | Sandbox time |
+| **GitHub** | Read code and issues; comment, open issues and pull requests (each asks you first). | A fine-grained token on Connections | Free |
+| **Google** | Search and read mail, draft replies, send (asks first), read and add calendar events, search and read Drive. | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, then *Connect Google* | Free |
+| **Railway** | Projects, deployments and logs; redeploy, restart or roll back (asks first). | A Railway token on Connections | Free |
+| **MCP servers** | Any Streamable HTTP MCP server (Notion, Linear, Slack, your own) becomes tools named `mcp_<server>_<tool>`. Tools that change things ask first. | Address and token on Connections | Depends on the server |
+| **Templates** | Chief of staff, researcher, developer, writer, reviewer and personal assistant, ready to add. | Connect an agent | – |
+| **Quality check** | A reviewer agent checks finished work against its acceptance criteria and sends it back with notes (2 rounds at most). | Settings → Quality check | One more run per review |
+| **Your ratings** | 👍/👎 on a finished task, with a note. The agent keeps it in its memory. | – | Free |
+| **Cheaper model** | Chat replies, low-priority tasks and reviews go to a cheaper model you set on the agent's page. | Agent page | Saves money |
+| **Prompt caching** | Claude runs reuse the instructions and history from the last turn at a tenth of the price or less. The Usage page shows what caching and cheaper models saved. | Nothing | Saves money |
+| **Voice** | 🎤 in the chats (and voice messages on Telegram), Hebrew or English. | `OPENAI_API_KEY` | About $0.003 a minute |
+
+Secrets for connections are encrypted with `CONNECTIONS_KEY` (set it to a long random text before adding any). Anything an agent reads from outside (web pages, email, issues, logs, MCP results) goes to the model labelled as outside content, and from then on in that run, sending or publishing anything asks you first.
 
 ## Three ways to add an agent
 
@@ -253,6 +283,9 @@ On a database with 12 agents, 400 tasks and 16,000 events, one server handled 20
 ## Security
 
 - **Dashboard:** HTTP Basic auth with `DASHBOARD_PASSWORD`, compared in constant time. After 10 wrong passwords an address waits 15 minutes. In production the dashboard is locked (503) until a password is set, unless `DASHBOARD_OPEN=1`.
+- **Two-step sign-in:** with `TOTP_SECRET` set (Settings → Two-step sign-in makes one and shows the QR code), each browser also needs a code from an authenticator app once every 30 days. Codes work once; 5 wrong codes and the address waits 15 minutes. To turn it off, remove the variable.
+- **Connections:** tokens are encrypted with AES-256-GCM (`CONNECTIONS_KEY`), opened only inside the tool that uses them, and never shown to a model or sent to the browser.
+- **Prompt injection:** outside content is labelled as data. Once a run has read any, every sending tool (email, GitHub, calendar invites, Railway, MCP tools that change things, filling forms in the browser) asks you first, and the activity log says why.
 - **Agents:** each has its own key; only its SHA-256 hash is stored. Rotate or delete a key on the agent's page. Request bodies over `API_MAX_BODY_BYTES` are refused (413).
 - **Headers:** `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS in production, no `X-Powered-By`.
 - **Agent-made files** are served in a CSP sandbox, so an HTML page an agent wrote can't read the dashboard.
@@ -270,5 +303,7 @@ See [docs/launch-checklist.md](docs/launch-checklist.md) before going live.
 ## Backups and rolling back
 
 Every start runs `scripts/migrate.mjs`. Before it migrates a local SQLite database, it saves a copy in `backups/` next to the database file (on Railway, `/data/backups/pre-migrate-<time>.db`) and keeps the newest `BACKUPS_KEEP` (default 10). Set `BACKUP_ON_MIGRATE=0` to turn it off. Migrations only add tables and columns, so the previous version of the app still runs on a migrated database.
+
+Every day the server also saves a copy of the whole database (`agentshub-<date>.db`, the last `BACKUP_DAILY_KEEP`, default 7) in the same folder. Settings → Backups lists them for download and has *Back up now*. They live on the same volume, so download one now and then, or turn on Railway's volume backups, to survive losing the volume.
 
 To roll back a bad deploy: in Railway, redeploy the previous deployment. If the data itself is damaged, stop the service, copy the latest backup over `/data/agentshub.db` (for example from a Railway shell), and start it again.
