@@ -66,3 +66,12 @@ export async function checkTotpSetupAction(secret: string, code: string): Promis
     return false;
   }
 }
+
+export async function backupNowAction(): Promise<{ name?: string; error?: string }> {
+  const { runBackup } = await import("@/lib/backups");
+  try {
+    return { name: (await runBackup()).name };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}

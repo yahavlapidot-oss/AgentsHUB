@@ -1,7 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { checkTotpSetupAction, newTotpSetupAction } from "@/app/settings-actions";
+import { backupNowAction, checkTotpSetupAction, newTotpSetupAction } from "@/app/settings-actions";
 import { toast } from "../toast";
 import { CopyBox } from "../ui";
 import { Card, Steps } from "./notification-cards";
@@ -58,6 +59,50 @@ export function TwoStepCard({ on }: { on: boolean }) {
             </>,
           ]}
         />
+      )}
+    </Card>
+  );
+}
+
+export function BackupsCard({ backups, available }: { backups: { name: string; bytes: number }[]; available: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const router = useRouter();
+  return (
+    <Card title="Backups" state={{ ok: available && backups.length > 0, label: !available ? "Not available" : backups.length ? `${backups.length} kept` : "None yet" }}>
+      <p className="text-sm text-ink-soft">
+        {available
+          ? "A copy of the whole database every day, the last 7 kept on the same disk. That covers mistakes and bad data. To also survive losing the disk, download one now and then, or turn on backups for the volume in Railway (billed by storage, usually cents a month)."
+          : "The database isn't a local file, so its provider keeps the backups."}
+      </p>
+      {backups.length > 0 && (
+        <ul className="text-sm">
+          {backups.map((b) => (
+            <li key={b.name} className="flex items-center justify-between border-b border-line py-1 last:border-b-0">
+              <a className="text-brand hover:underline" href={`/api/ui/backups/${b.name}`}>
+                {b.name}
+              </a>
+              <span className="text-xs text-ink-faint">{(b.bytes / 1024 / 1024).toFixed(1)} MB</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {available && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="btn-ghost border border-line"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              const r = await backupNowAction();
+              setBusy(false);
+              toast(r.error ?? `Saved ${r.name}`, r.error ? "error" : undefined);
+              router.refresh();
+            }}
+          >
+            {busy ? "Saving…" : "Back up now"}
+          </button>
+        </div>
       )}
     </Card>
   );

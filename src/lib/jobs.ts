@@ -2,6 +2,7 @@
  * Housekeeping the server does on its own, checked on every runner tick: each
  * job remembers in settings when it last ran, so a restart doesn't repeat it.
  */
+import { backupDir, runBackup } from "./backups";
 import { getSetting, setSetting } from "./data";
 import { buildDigest, digestDue, getDigestSettings } from "./digest";
 import { notify } from "./notify";
@@ -15,6 +16,14 @@ const JOBS: Job[] = [
     run: async () => {
       const d = await buildDigest();
       await notify(d.subject, d.text, { kind: "digest" });
+    },
+  },
+  {
+    key: "backup",
+    // Once a day, a little under 24 hours apart so it doesn't drift later each day.
+    due: async (last, now) => backupDir() !== null && process.env.BACKUPS !== "off" && (last === null || now - last >= 23.5 * 3_600_000),
+    run: async () => {
+      await runBackup();
     },
   },
 ];

@@ -1,8 +1,9 @@
 import { DigestCard, PushCard, TelegramCard } from "@/components/settings/notification-cards";
 import { QualityCard } from "@/components/settings/quality-card";
-import { TwoStepCard } from "@/components/settings/security-card";
+import { BackupsCard, TwoStepCard } from "@/components/settings/security-card";
 import { PageHeader } from "@/components/ui";
 import { getHostedAgents } from "@/lib/data";
+import { backupDir, listBackups } from "@/lib/backups";
 import { getQualitySettings } from "@/lib/quality";
 import { secondFactorOn } from "@/lib/second-factor";
 import { getDigestSettings } from "@/lib/digest";
@@ -22,6 +23,7 @@ export default async function SettingsPage() {
         <PushCard configured={pushConfigured()} publicKey={vapidPublicKey()} />
         <QualityCard initial={quality} agents={hosted.map((a) => ({ id: a.id, name: a.name }))} />
         <TwoStepCard on={secondFactorOn()} />
+        <BackupsCard backups={listBackups().map((b) => ({ name: b.name, bytes: b.bytes }))} available={backupDir() !== null} />
       </div>
     </div>
   );
